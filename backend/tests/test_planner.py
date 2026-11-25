@@ -5,6 +5,7 @@ import httpx
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from graph import build_graph
+from language import supported_script
 from providers import Providers
 from schemas import Preferences, Proposal, Route, today_in_india, upcoming_saturday
 from state import PlannerState
@@ -83,6 +84,13 @@ def test_grounded_cost_and_time():
     assert plan.activities[0].maps_url.endswith("query_place_id=cafe")
     assert any("first stop" in item for item in plan.assumptions)
     assert any("Opening hours unavailable" in item for item in plan.activities[0].warnings)
+
+
+def test_supported_transcript_scripts():
+    assert supported_script("हैदराबाद में ₹1,000, maybe lunch and a museum.")
+    assert supported_script("Hyderabad mein do hazaar rupaye.")
+    assert not supported_script("꿈이라.")
+    assert not supported_script("نگاه‌های برابر")
 
 
 def test_budget_travel_and_dietary_hard_failures():
@@ -231,6 +239,34 @@ async def test_timeout_retries_once_and_generic_plan_has_no_venue_links():
     assert state.itinerary.verification_status == "unverified"
     assert all(stop.place_id is None and stop.maps_url is None for stop in state.itinerary.activities)
     assert any(event["status"] == "warning" for event in state.trace)
+
+
+async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
+    class UnusedModel:
+        def bind_tools(self, _tools):
+            return self
+
+        async def ainvoke(self, _messages):
+            raise AssertionError("The outage response should not require another model call.")
+
+    async def timeout(request: httpx.Request):
+        raise httpx.ReadTimeout("Fixture timeout", request=request)
+
+    state = PlannerState(
+        publish=AsyncMock(return_value=True), language="hi",
+        preferences=Preferences(city="Hyderabad", budget=1000, available_minutes=180),
+    )
+    search = AIMessage(content="", tool_calls=[{
+        "name": "search_places", "args": {"query": "historic sites"}, "id": "test-outage",
+    }])
+    async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
+        graph = build_graph(state, Providers(client, "fixture"), UnusedModel())
+        result = await graph.ainvoke({"messages": [HumanMessage(content="मुझे इतिहास पसंद है।"), search]})
+
+    assert "क्या मैं फिर कोशिश करूँ" in result["messages"][-1].text
+    assert state.itinerary is None
+    assert not state.preferences.allow_unverified_plan
+    assert any(step["tool"] == "search_places" and step["status"] == "warning" for step in state.trace)
 
 
 def test_outdoor_stop_needs_weather_and_rejects_high_rain():

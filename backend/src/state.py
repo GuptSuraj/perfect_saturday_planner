@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from schemas import Itinerary, Preferences, Route
+from schemas import Itinerary, Language, Preferences, Route
 
 Publish = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
@@ -12,6 +12,7 @@ Publish = Callable[[str, dict[str, Any]], Awaitable[bool]]
 @dataclass
 class PlannerState:
     publish: Publish
+    language: Language = "en"
     preferences: Preferences = field(default_factory=Preferences)
     places: dict[str, dict] = field(default_factory=dict)
     place_references: dict[str, str] = field(default_factory=dict)
@@ -26,6 +27,15 @@ class PlannerState:
     trace: list[dict] = field(default_factory=list)
     writes: asyncio.Lock = field(default_factory=asyncio.Lock)
     calls: int = 0
+
+    async def record_step(
+        self, tool: str, status: str, description: str, *, event_id: str | None = None, duration_ms: int | None = None,
+    ) -> None:
+        event = {"id": event_id or uuid4().hex, "tool": tool, "status": status, "description": description}
+        if duration_ms is not None:
+            event["duration_ms"] = duration_ms
+        self.trace.append(event)
+        await self.publish("trace", event)
 
     @property
     def city_key(self) -> str:

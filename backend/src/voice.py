@@ -12,7 +12,8 @@ from livekit.plugins.openai import realtime
 from openai.types.realtime.audio_transcription import AudioTranscription
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
-from schemas import Model, Preferences, ShortText
+from language import language_instruction, localized
+from schemas import Language, Model, Preferences, ShortText
 from state import PlannerState
 from tools import save_preferences
 
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 VOICE_INSTRUCTIONS = """
 You're Mira, the voice of Perfect Saturday, a weekend planner for Indian cities. Sound like
-a friend who knows how to make a good plan. Speak in the user's language when you can.
+a friend who knows how to make a good plan.
 Keep a warm, unhurried delivery. Use contractions in English. One or two short sentences
 is usually enough. Pick up on something specific the user just said. Avoid stock praise,
 lists, scripted filler, repetitive affirmations, and narrating your process. If the user
@@ -29,9 +30,11 @@ thread without repeating the part they've already heard.
 
 Only ask for missing essentials: city, total INR budget, and available time. Ask for
 missing budget and time together, even when the city is already known. Understand
-"all day" or "the whole day" as eight hours, and "2K" as 2,000 rupees. Never ask for
+"all day", "the whole day", or "पूरा दिन" as eight hours, and "2K" as 2,000 rupees. Never ask for
 group size, start time, mood, transport, or area as a prerequisite. Assume one person
-and pick a suitable start, around 10 am for a full day. Use any preferences they offer.
+and pick a suitable start, around 10 am for a full day. Use any preferences they offer,
+including interests, pace, travel mode, food preferences, and hard restrictions. Keep
+preferences the user already gave unless they change them.
 Once the essentials are clear, start planning in that turn without another question.
 
 Chat directly for greetings and preference shifts before they're ready to plan. Call
@@ -49,6 +52,10 @@ or availability. The tool's displayed and accepted flags are authoritative. Only
 something is on screen or accepted when the tool reports it. When a plan is ready, mention
 one thing that fits what they wanted; the itinerary can speak for the rest. Invite a change
 when it makes sense. If the user approves it, close warmly. Do not offer bookings or payments.
+If real places could not be checked, offer to retry or build a rough plan without
+verified venues. An explicit request for that rough plan is a new create or revise action,
+not approval of the itinerary. Pass allow_unverified_plan=true and omit searches only
+when the user expressly agrees to the fallback or asks for it.
 """
 
 
@@ -63,26 +70,40 @@ class VoicePlanner(Agent):
             "preferences": planner.preferences.model_dump(mode="json", exclude_none=True),
             "itinerary": planner.itinerary.title if planner.itinerary else None,
         }
+        self._instruction_base = f"{VOICE_INSTRUCTIONS}\nPreferences and current plan: {json.dumps(context)}"
+        self._realtime = realtime.RealtimeModel(
+            model=os.getenv("OPENAI_REALTIME_MODEL") or "gpt-realtime",
+            voice=os.getenv("OPENAI_REALTIME_VOICE") or "marin",
+            input_audio_transcription=self._transcription(planner.language),
+            input_audio_noise_reduction="near_field",
+            turn_detection=SemanticVad(
+                type="semantic_vad", eagerness="medium",
+                create_response=True, interrupt_response=True,
+            ),
+        )
         super().__init__(
-            instructions=f"{VOICE_INSTRUCTIONS}\nPreferences and current plan: {json.dumps(context)}",
+            instructions=f"{self._instruction_base}\n{language_instruction(planner.language)}",
             chat_ctx=chat_ctx,
             stt=None,
-            llm=realtime.RealtimeModel(
-                model=os.getenv("OPENAI_REALTIME_MODEL") or "gpt-realtime",
-                voice=os.getenv("OPENAI_REALTIME_VOICE") or "marin",
-                input_audio_transcription=AudioTranscription(model="gpt-4o-mini-transcribe"),
-                input_audio_noise_reduction="near_field",
-                turn_detection=SemanticVad(
-                    type="semantic_vad", eagerness="medium",
-                    create_response=True, interrupt_response=True,
-                ),
-            ),
+            llm=self._realtime,
             turn_handling=TurnHandlingOptions(turn_detection="realtime_llm"),
         )
         self.ready = asyncio.Event()
         self._graph = graph
         self._planner = planner
         self._work: asyncio.Task | None = None
+
+    @staticmethod
+    def _transcription(language: Language) -> AudioTranscription:
+        return AudioTranscription(
+            model="gpt-4o-mini-transcribe", language=language,
+            prompt=localized(language, "Indian English, including Hindi words and Indian place names.",
+                             "भारत में शनिवार की योजना पर बातचीत। हिंदी और अंग्रेज़ी शब्द, जगहों के नाम, समय और रुपये।"),
+        )
+
+    async def set_language(self, language: Language) -> None:
+        await self.update_instructions(f"{self._instruction_base}\n{language_instruction(language)}")
+        self._realtime.update_options(input_audio_transcription=self._transcription(language))
 
     async def on_enter(self) -> None:
         self.ready.set()
@@ -129,6 +150,9 @@ class VoicePlanner(Agent):
                 saved = await save_preferences(self._planner, preferences, action == "revise")
                 if saved["status"] != "ok":
                     return {"messages": [AIMessage(content=saved["error"])]}
+                await self._planner.record_step("update_preferences", "success", localized(
+                    self._planner.language, "Used the preferences you shared.", "आपकी बताई पसंद और ज़रूरतों को ध्यान में रखा।",
+                ))
             prefs = self._planner.preferences
             preferences_ready = prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
             if preferences_ready and action in {"create", "revise"} and searches:
@@ -160,7 +184,10 @@ class VoicePlanner(Agent):
             raise
         except Exception as error:
             logger.warning("Voice planning request failed: %s", type(error).__name__)
-            return {"status": "unavailable", "summary": "The search didn't finish. Ask if they'd like to try again."}
+            return {"status": "unavailable", "summary": localized(
+                self._planner.language, "The search didn’t finish. Would you like me to try again?",
+                "खोज पूरी नहीं हो सकी। क्या मैं फिर कोशिश करूँ?",
+            )}
         finally:
             if self._work is work:
                 self._work = None
@@ -174,7 +201,8 @@ class VoicePlanner(Agent):
             action in {"create", "revise"} and not displayed and not self._planner.last_places_failure
             and prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
         ):
-            summary = "I couldn’t verify a plan that fit just yet. I can try a tighter area."
+            summary = localized(self._planner.language, "I couldn’t verify a plan that fit just yet. I can try a tighter area.",
+                                "अभी आपकी ज़रूरतों के मुताबिक योजना की पुष्टि नहीं हो सकी। मैं किसी छोटे इलाके में विकल्प देख सकती हूँ।")
         return {
             "status": "complete",
             "displayed": displayed,

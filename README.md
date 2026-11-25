@@ -54,7 +54,7 @@ npm ci
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000). Type to Mira or select **Talk to Mira**. Open an itinerary card to see the stops, timing, estimated cost, and sources. When testing a local worker against a project that already runs a deployed worker with the same dispatch name, use a separate project to ensure the room reaches the local worker.
+Open [localhost:3000](http://localhost:3000). Choose **English** or **हिंदी** in the header, then type or select **Talk to Mira**. Switch the language in the same chat if needed. Open the itinerary to see the preferences Mira used, each stop's timing, cost and reason, and completed steps under **What Mira did**. If the venue lookup is unavailable, Mira offers to retry or build a clearly labelled rough plan with your approval. When testing a local worker against a project that already runs a deployed worker with the same dispatch name, use a separate project to ensure the room reaches the local worker.
 
 ## Deploy
 

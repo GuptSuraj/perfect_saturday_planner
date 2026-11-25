@@ -8,7 +8,7 @@ import {
 } from "livekit-client";
 import {
   chatMessage, itinerary, preferenceUpdate, traceEvent,
-  type ChatItem, type Itinerary, type Message, type Preferences, type TraceEvent,
+  type ChatItem, type Itinerary, type Language, type Message, type Preferences, type TraceEvent,
 } from "../types/planner";
 
 type Connection = "idle" | "connecting" | "connected" | "reconnecting";
@@ -36,7 +36,32 @@ export function usePlanner() {
   const [notice, setNotice] = useState("");
   const [sending, setSending] = useState(false);
   const [micChange, setMicChange] = useState(false);
+  const [language, setLanguage] = useState<Language>("en");
+  const [changingLanguage, setChangingLanguage] = useState(false);
+  const selectedLanguage = useRef<Language>("en");
   const sendingRef = useRef(false);
+
+  async function changeLanguage(next: Language) {
+    if (next === selectedLanguage.current) return;
+    const room = roomRef.current;
+    setNotice("");
+    setChangingLanguage(true);
+    try {
+      if (room) {
+        const result = await room.localParticipant.performRpc({
+          destinationIdentity: agentIdentity.current, method: "planner.language", payload: next,
+        });
+        if (result !== "ok") throw new Error("Language update failed");
+        if (room !== roomRef.current) return;
+      }
+      selectedLanguage.current = next;
+      setLanguage(next);
+    } catch {
+      setNotice(selectedLanguage.current === "hi" ? "भाषा बदल नहीं सकी। फिर कोशिश करें।" : "Couldn’t switch languages. Try again.");
+    } finally {
+      setChangingLanguage(false);
+    }
+  }
 
   function detachAudio() {
     for (const [track, element] of audio.current) {
@@ -197,7 +222,7 @@ export function usePlanner() {
           const existing = items.find((item) => item.id === data.id);
           if (existing) {
             if (data.status === "running") return items;
-            return items.map((item) => item.id === data.id ? data : item);
+            return [...items.filter((item) => item.id !== data.id), data];
           }
           return [...items.slice(-79), data];
         });
@@ -245,7 +270,9 @@ export function usePlanner() {
     const opening = (async () => {
       let timer: ReturnType<typeof setTimeout> | undefined;
       try {
-        const response = await fetch("/api/token", { method: "POST", signal: AbortSignal.timeout(12000) });
+        const response = await fetch(`/api/token?language=${selectedLanguage.current}`, {
+          method: "POST", signal: AbortSignal.timeout(12000),
+        });
         const details = await response.json();
         if (!response.ok) throw new Error(details.error || "Could not start the conversation.");
         if (epoch.current !== run) throw new Error("Conversation cancelled.");
@@ -366,6 +393,6 @@ export function usePlanner() {
   return {
     connection, agentStatus, mic, voiceStarted, voiceLevel, userSpeaking, soundBlocked, messages,
     prefs, trace, plan, revisionNeeded, notice, working, sending, micChange, audioContainer,
-    end, send, toggleMic, enableSound,
+    language, changingLanguage, changeLanguage, end, send, toggleMic, enableSound,
   };
 }

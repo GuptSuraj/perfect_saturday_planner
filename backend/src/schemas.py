@@ -8,6 +8,7 @@ INDIA = ZoneInfo("Asia/Kolkata")
 Time = Annotated[str, Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")]
 ShortText = Annotated[str, Field(min_length=1, max_length=110)]
 Mode = Literal["walk", "drive"]
+Language = Literal["en", "hi"]
 Category = Literal["food", "public_outdoors", "browse", "ticketed", "other"]
 
 

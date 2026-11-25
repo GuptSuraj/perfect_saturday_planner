@@ -14,6 +14,9 @@ export const preferences = z.object({
   interests: z.array(z.string()).optional(), constraints: z.array(z.string()).optional(),
   locality: z.string().optional(), start_time: z.string().optional(),
   people: z.number().optional(), transport: z.enum(["walk", "drive"]).optional(),
+  dietary: z.enum(["vegetarian_options", "vegetarian_only", "requires_confirmation"]).optional(),
+  environment: z.enum(["indoors", "outdoors"]).optional(),
+  accessibility_required: z.boolean().optional(),
   target_date: z.string().optional(),
 });
 
@@ -82,6 +85,7 @@ export type Itinerary = z.infer<typeof itinerary>;
 export type Transit = z.infer<typeof transit>;
 export type TraceEvent = z.infer<typeof traceEvent>;
 export type Preferences = z.infer<typeof preferences>;
+export type Language = "en" | "hi";
 export const chatMessage = z.object({
   id: z.string(),
   role: z.enum(["assistant", "user"]),
