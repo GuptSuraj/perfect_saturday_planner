@@ -1,4 +1,3 @@
-import json
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
@@ -8,9 +7,9 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from graph import build_graph
 from language import romanize_caption, supported_script
 from providers import Providers
-from schemas import Coordinates, Preferences, Proposal, Route, today_in_india, upcoming_saturday
+from schemas import Preferences, Proposal, Route, today_in_india, upcoming_saturday
 from state import PlannerState
-from tools import make_tools, save_preferences
+from tools import make_tools
 from validation import opening_check, validate
 
 
@@ -95,26 +94,6 @@ def test_supported_transcript_scripts():
     assert romanize_caption("नमस्ते, मैं Mira हूँ। Budget ₹१,०००") == "namaste, main Mira hoon. Budget ₹1,000"
 
 
-async def test_followup_keeps_prior_answers_and_explicit_removals_still_work():
-    state = PlannerState(publish=AsyncMock(return_value=True))
-    await save_preferences(state, Preferences(city="Bangalore", budget=2000, available_minutes=240))
-    await save_preferences(state, Preferences(
-        city=None, budget=None, available_minutes=None, mood="Tired but wants to do something fun",
-        interests=["Food", "Music", "Walks"], constraints=["Avoid crowded places"],
-        dietary="vegetarian_options", locality="Cubbon Park Metro Station",
-    ))
-    await save_preferences(state, Preferences(mood=None, interests=[], constraints=[], locality=None))
-    assert state.preferences.city == "Bangalore"
-    assert state.preferences.budget == 2000 and state.preferences.available_minutes == 240
-    assert state.preferences.interests == ["Food", "Music", "Walks"]
-    assert state.preferences.constraints == ["Avoid crowded places"]
-    assert state.missing_personal_preferences == []
-    assert state.starting_label == "Cubbon Park Metro Station"
-    await save_preferences(state, Preferences(no_restrictions=True), clear_fields=["dietary", "constraints"])
-    assert state.preferences.dietary is None and not state.preferences.constraints
-    assert state.missing_personal_preferences == []
-
-
 def test_budget_travel_and_dietary_hard_failures():
     state = make_state()
     state.preferences.budget = 300
@@ -150,44 +129,6 @@ def test_unspecified_times_are_scheduled_from_departure_and_routes():
     assert plan.travel_minutes == 19
     assert plan.buffer_minutes == 13
     assert plan.duration_minutes == 132
-
-
-async def test_device_start_routes_to_first_stop_and_can_be_replaced_by_a_named_start():
-    state = make_state()
-    origin = Coordinates(latitude=12.97, longitude=77.59)
-    proposal = make_proposal()
-    for stop in proposal.activities:
-        stop.start_time = None
-    proposal.departure_time = "14:00"
-
-    sent_origins = []
-
-    async def maps(request: httpx.Request):
-        if request.url.path.endswith("places:searchNearby"):
-            return httpx.Response(200, json={"places": [{"addressComponents": [
-                {"types": ["locality"], "longText": "Bengaluru"},
-                {"types": ["country"], "shortText": "IN"},
-            ]}]})
-        sent_origins.append(json.loads(request.content)["origin"])
-        return httpx.Response(200, json={"routes": [{"duration": "480s", "distanceMeters": 530}]})
-
-    async with httpx.AsyncClient(transport=httpx.MockTransport(maps)) as client:
-        providers = Providers(client, "fixture")
-        assert await providers.city_near(origin) == "Bengaluru"
-        await save_preferences(state, Preferences(), device_start=origin)
-        display = next(tool for tool in make_tools(state, providers) if tool.name == "display_itinerary")
-        assert (await display.ainvoke({"proposal": proposal.model_dump()}))["status"] == "ok"
-        assert state.itinerary.starting_label == "Current location"
-        assert state.itinerary.activities[0].start_time == "14:08"
-        assert state.itinerary.travel_minutes == 20
-        assert sent_origins == [{"location": {"latLng": origin.model_dump()}}]
-        assert all("latitude" not in json.dumps(call.args[1]) for call in state.publish.await_args_list)
-
-        await save_preferences(state, Preferences(locality="Indiranagar"))
-        assert state.device_start is None and state.revision_needed
-        assert (await display.ainvoke({"proposal": proposal.model_dump()}))["status"] == "ok"
-        assert state.itinerary.starting_label == "Indiranagar"
-        assert sent_origins[-1] == {"address": "Indiranagar, Bengaluru, India"}
 
 
 def test_date_specific_hours_override_regular_hours():
@@ -321,22 +262,9 @@ async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
     }])
     async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
         graph = build_graph(state, Providers(client, "fixture"), UnusedModel())
-        request = {
+        result = await graph.ainvoke({
             "messages": [HumanMessage(content="Mujhe itihaas pasand hai."), search], "reply_language": "hi",
-        }
-        pending = await graph.ainvoke(request)
-        assert "current location" in pending["messages"][-1].text
-        assert "mood" in pending["messages"][-1].text
-        assert "kya karna pasand" in pending["messages"][-1].text
-        assert "dhyaan" in pending["messages"][-1].text
-        assert state.trace == []
-        state.preferences.start_at_first_stop = True
-        state.preferences.mood = "Tired but wants to do something fun"
-        state.preferences.interests = ["food", "music", "walks"]
-        state.preferences.constraints = ["avoid crowded places"]
-        state.preferences.dietary = "vegetarian_options"
-        assert state.missing_personal_preferences == []
-        result = await graph.ainvoke(request)
+        })
 
     assert "phir koshish" in result["messages"][-1].text
     assert state.itinerary is None
@@ -378,25 +306,3 @@ async def test_graph_uses_tool_results_and_emits_only_spoken_text():
         stream = graph.astream({"messages": [HumanMessage(content="I am in Bengaluru.")]}, stream_mode="custom")
         assert [part async for part in stream] == ["What budget would you like me to use?"]
     assert planner.preferences.city == "Bengaluru"
-
-
-async def test_graph_groups_unanswered_details_as_soon_as_basics_are_saved():
-    class ScriptedModel:
-        def bind_tools(self, _tools):
-            return self
-
-        async def ainvoke(self, messages):
-            assert not isinstance(messages[-1], ToolMessage)
-            return AIMessage(content="", tool_calls=[{
-                "name": "update_preferences",
-                "args": {"patch": {"city": "Bangalore", "budget": 2000, "available_minutes": 240}},
-                "id": "intake-update",
-            }])
-
-    state = PlannerState(publish=AsyncMock(return_value=True))
-    async with httpx.AsyncClient() as client:
-        graph = build_graph(state, Providers(client, "fixture"), ScriptedModel())
-        stream = graph.astream({"messages": [HumanMessage(content="Four hours in Bangalore with ₹2,000.")]}, stream_mode="custom")
-        reply, = [part async for part in stream]
-    assert "current location or somewhere else" in reply
-    assert "how you’re feeling" in reply and "enjoy doing" in reply and "avoid" in reply

@@ -61,11 +61,6 @@ html:has(.chat-app), body:has(.chat-app) { overflow: hidden; overscroll-behavior
 .plan-link { flex: 0 0 auto; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; font-size: .85rem; font-weight: 650; }
 
 .chat-bottom { flex: 0 0 auto; padding-top: 4px; background: var(--surface); }
-.start-options { display: flex; flex-wrap: wrap; gap: 2px 7px; margin: 0 0 6px; }
-.start-link { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; min-height: 31px; border-radius: 7px; background: var(--soft); color: var(--muted); font-size: .8rem; font-weight: 620; }
-.start-link:hover:not(:disabled) { background: var(--accent); color: var(--ink); }
-.start-link:disabled { opacity: .7; }
-.welcome-start { margin-top: 9px; }
 .voice-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 29px; padding: 0 5px; margin-bottom: 4px; color: var(--muted); font-size: .84rem; }
 .voice-reading, .enable-sound { display: flex; align-items: center; gap: 7px; }
 .enable-sound { text-decoration: underline; text-underline-offset: 2px; flex: 0 0 auto; }

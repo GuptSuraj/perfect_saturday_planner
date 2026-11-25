@@ -10,10 +10,6 @@ ShortText = Annotated[str, Field(min_length=1, max_length=110)]
 Mode = Literal["walk", "drive"]
 Language = Literal["en", "hi"]
 Category = Literal["food", "public_outdoors", "browse", "ticketed", "other"]
-OptionalPreference = Literal[
-    "mood", "interests", "constraints", "no_restrictions", "locality", "start_at_first_stop", "start_time", "people",
-    "transport", "dietary", "environment", "accessibility_required", "target_date", "allow_unverified_plan",
-]
 
 
 def today_in_india() -> date:
@@ -45,9 +41,7 @@ class Preferences(Model):
     mood: ShortText | None = None
     interests: list[ShortText] = Field(default_factory=list, max_length=8)
     constraints: list[ShortText] = Field(default_factory=list, max_length=8)
-    no_restrictions: bool | None = Field(default=None, description="True only if the user says there is nothing to avoid or skips restrictions.")
-    locality: ShortText | None = Field(default=None, description="Confirmed Saturday starting neighbourhood, address or landmark.")
-    start_at_first_stop: bool | None = Field(default=None, description="True only if the user chooses to start the itinerary at its first stop.")
+    locality: ShortText | None = None
     start_time: Time | None = None
     people: int | None = Field(default=None, ge=1, le=20)
     transport: Mode | None = None
@@ -139,7 +133,6 @@ class Itinerary(Model):
     duration_minutes: int
     travel_minutes: int
     buffer_minutes: int
-    starting_label: str | None = None
     starting_leg: Transit | None = None
     activities: list[Activity]
     explanation: str

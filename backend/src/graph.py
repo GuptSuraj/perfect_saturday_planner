@@ -10,7 +10,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from language import LANGUAGE_INSTRUCTIONS, localized
-from prompts import INSTRUCTIONS, intake_question
+from prompts import INSTRUCTIONS
 from providers import Providers, direct_distance
 from schemas import INDIA, Language, upcoming_saturday
 from state import PlannerState
@@ -36,12 +36,6 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
     llm_with_preferences = chat_model.bind_tools([tool for tool in tools if tool.name != "update_preferences"])
     tools_node = ToolNode(tools, handle_tool_errors=True)
 
-    def next_question(state: TurnState) -> str:
-        prefs = planner.preferences
-        if any(value is None for value in (prefs.city, prefs.budget, prefs.available_minutes)):
-            return ""
-        return intake_question(planner.starting_point_chosen, planner.missing_personal_preferences, state.get("reply_language", "en"))
-
     async def decide(state: TurnState):
         now = datetime.now(INDIA)
         current = planner.itinerary
@@ -49,9 +43,6 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             "current_local_time": now.isoformat(timespec="minutes"),
             "default_saturday": upcoming_saturday(now.date()).isoformat(),
             "preferences": planner.preferences.model_dump(mode="json", exclude_none=True),
-            "starting_point_chosen": planner.starting_point_chosen,
-            "starting_point": planner.starting_label,
-            "missing_personal_preferences": planner.missing_personal_preferences,
             "last_displayed_itinerary": current.model_dump(mode="json") if current else None,
             "revision_needed": planner.revision_needed,
         }
@@ -68,11 +59,6 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
                 {"venues": [a, b], "straight_line_metres": distance}
                 for distance, a, b in distances[:15] if distance <= 2500
             ]
-            if planner.device_start is not None:
-                origin = planner.device_start.model_dump()
-                context["candidate_distance_from_start_metres"] = {
-                    place["_reference"]: round(direct_distance(origin, place["location"])) for place in venues
-                }
         messages = [SystemMessage(content=(
             f"{INSTRUCTIONS}\n{LANGUAGE_INSTRUCTIONS}\nServer session state: {json.dumps(context)}"
         ))]
@@ -124,10 +110,6 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             return {
                 "messages": [ToolMessage(content=error, tool_call_id=call["id"], name=call["name"]) for call in calls],
             }
-        if names & {"search_places", "display_itinerary"} and (question := next_question(state)):
-            get_stream_writer()(question)
-            messages = [ToolMessage(content="More preferences needed.", tool_call_id=call["id"], name=call["name"]) for call in calls]
-            return {"messages": [*messages, AIMessage(content=question)], "finished": True}
         previous = planner.itinerary
         result = await tools_node.ainvoke(state)
         reply = None
@@ -138,10 +120,6 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             else:
                 reply = localized(language, "Your Saturday plan is ready. I’ve added it to the chat.",
                                   "Saturday ka plan taiyaar hai. Maine use chat mein jod diya hai.")
-        elif names == {"update_preferences"}:
-            outcome = result["messages"][-1].content
-            if isinstance(outcome, str) and outcome.startswith("{") and json.loads(outcome).get("status") == "ok":
-                reply = next_question(state)
         elif names == {"search_places"} and not any(place.get("_city") == planner.city_key for place in planner.places.values()):
             outcomes = [json.loads(message.content) for message in result["messages"]
                         if isinstance(message.content, str) and message.content.startswith("{")]
@@ -157,7 +135,7 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             result["messages"].append(AIMessage(content=reply))
         return {
             **result, "calls": state.get("calls", 0) + len(calls),
-            "finished": bool(reply),
+            "finished": reply is not None,
         }
 
     graph = StateGraph(TurnState)

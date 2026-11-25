@@ -13,8 +13,7 @@ from openai.types.realtime.audio_transcription import AudioTranscription
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
 from language import LANGUAGE_INSTRUCTIONS, localized
-from prompts import intake_question
-from schemas import Language, Model, OptionalPreference, Preferences, ShortText
+from schemas import Language, Model, Preferences, ShortText
 from state import PlannerState
 from tools import save_preferences
 
@@ -29,31 +28,18 @@ lists, scripted filler, repetitive affirmations, and narrating your process. If 
 is still talking, let them finish. If they interrupt or change their mind, follow the new
 thread without repeating the part they've already heard.
 
-Ask for missing city, total INR budget, available time, starting point, mood or energy level,
-interests, and things to keep in mind or avoid. Ask for budget and time together, then ask
-for any missing mood, interests, and constraints in one short follow-up. Combine the
-starting-point question with that prompt if it is also missing. Don't repeat answers the
-user already gave. Understand
+Only ask for missing essentials: city, total INR budget, and available time. Ask for
+missing budget and time together, even when the city is already known. Understand
 "all day", "the whole day", or "पूरा दिन" as eight hours, and "2K" as 2,000 rupees. Never ask for
-group size, start time, or transport as a prerequisite. Assume one person
+group size, start time, mood, transport, or area as a prerequisite. Assume one person
 and pick a suitable start, around 10 am for a full day. Use any preferences they offer,
 including interests, pace, travel mode, food preferences, and hard restrictions. Keep
 preferences the user already gave unless they change them.
-Ask what to keep in mind or avoid, such as dietary needs or crowds. Respect a choice
-to skip any of these questions. In preferences, record mood as "No preference" or
-interests as ["Open to suggestions"] only if the user declines those questions. Set
-no_restrictions only if the user says they have none or chooses to skip restrictions.
-Leave fields unset if the user hasn't answered them.
 Set the dietary field for any vegetarian food request, including shakahari or शाकाहारी.
 Pick vegetarian_options except when a pure-veg kitchen is expressly needed. Reflect food
 requirements in the searches too. Save required indoor and wheelchair access settings
 in their dedicated fields. When speaking Hindi, use Mira's feminine first-person forms.
-If a starting point is still missing, ask whether they'll start from their current
-location or somewhere else. Tell them they can tap Use current location, name an area
-or landmark, or start at the first stop. Only save locality for a named departure
-point, and set start_at_first_stop only when chosen. The app confirms device location.
-Do not ask again for a starting point the app or the user already confirmed. Once the
-essentials are clear, start planning in that turn without another question.
+Once the essentials are clear, start planning in that turn without another question.
 
 Chat directly for greetings and preference shifts before they're ready to plan. Call
 plan_saturday to build a real itinerary as soon as you have enough details, or when they
@@ -61,10 +47,9 @@ ask for real suggestions, changes, a check on the displayed plan, or explicitly 
 Use the user's latest terms when you describe the task and carry over relevant earlier
 details. For a genuine correction while research is running, submit the corrected request;
 it replaces the old one. Don't resubmit for a backchannel or a question you can answer.
-Call the planning tool without announcing a search or reading search queries out loud.
-If the tool returns needs_preferences, ask those questions right away. Mention work in
-progress only after the tool confirms research has started. If they ask what's happening,
-briefly say what you're checking. Don't predict the wait.
+Say one short, specific line before starting research, then let the user talk. When
+the tool reports that research has started, avoid another acknowledgement. Don't
+predict the wait. If they ask what's happening, briefly say what you're checking.
 
 Use only real venue details supplied by the planner. Do not invent places, times, costs,
 or availability. The tool's displayed and accepted flags are authoritative. Only say
@@ -87,7 +72,6 @@ class VoicePlanner(Agent):
     def __init__(self, *, graph, planner: PlannerState, chat_ctx: ChatContext) -> None:
         context = {
             "preferences": planner.preferences.model_dump(mode="json", exclude_none=True),
-            "starting_point": planner.starting_label,
             "itinerary": planner.itinerary.title if planner.itinerary else None,
         }
         model = realtime.RealtimeModel(
@@ -124,7 +108,6 @@ class VoicePlanner(Agent):
         language: Language,
         preferences: Preferences | None = None,
         searches: list[VenueSearch] | None = None,
-        clear_fields: list[OptionalPreference] | None = None,
     ) -> dict:
         """Build, revise, check, or confirm a real Saturday itinerary in the background.
 
@@ -135,17 +118,13 @@ class VoicePlanner(Agent):
             preferences: Known city, total INR budget, and available minutes (480 for all day).
                 Include other explicitly stated preferences in their specific fields.
                 Set dietary to vegetarian_options for vegetarian or shakahari food.
-                Use locality for an explicitly named starting point, and set start_at_first_stop
-                only when chosen. Leave optional defaults unset.
+                Leave optional defaults unset.
             searches: For a new plan, give one or two short venue searches, covering distinct
                 needs in the SAME named neighbourhood or landmark area. A city is never a
                 locality. Pick a compact area yourself unless the user gave one. For food
                 and history in Hyderabad, use "historic sites" and "affordable restaurants",
                 with "Old City around Charminar" as the locality for both. When the user
                 asks for vegetarian food, search for affordable vegetarian restaurants.
-                Use the saved starting locality when appropriate. If the app has a device start,
-                omit the search locality unless the user requested an area.
-            clear_fields: Optional preferences the user explicitly asked to remove. Omit otherwise.
                 For a change that needs no new venues, omit searches.
         """
         if not request.strip():
@@ -166,21 +145,13 @@ class VoicePlanner(Agent):
             if previous_work and not previous_work.done():
                 previous_work.cancel()
                 await asyncio.gather(previous_work, return_exceptions=True)
-            if preferences is not None or clear_fields:
-                saved = await save_preferences(
-                    self._planner, preferences or Preferences(), action == "revise", clear_fields=clear_fields,
-                )
+            if preferences is not None:
+                saved = await save_preferences(self._planner, preferences, action == "revise")
                 if saved["status"] != "ok":
-                    return {"preference_error": saved["error"]}
+                    return {"messages": [AIMessage(content=saved["error"])]}
                 await self._planner.record_step("update_preferences", "success", "Used the preferences you shared.")
             prefs = self._planner.preferences
             preferences_ready = prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
-            if preferences_ready and action in {"create", "revise"}:
-                question = intake_question(
-                    self._planner.starting_point_chosen, self._planner.missing_personal_preferences, language,
-                )
-                if question:
-                    return {"intake_question": question}
             if preferences_ready and action in {"create", "revise"} and searches:
                 history.append(AIMessage(content="", tool_calls=[
                     {"name": "search_places", "args": search.model_dump(exclude_none=True), "id": f"call_{uuid4().hex}"}
@@ -218,11 +189,6 @@ class VoicePlanner(Agent):
         finally:
             if self._work is work:
                 self._work = None
-
-        if result.get("intake_question"):
-            return {"status": "needs_preferences", "summary": result["intake_question"]}
-        if result.get("preference_error"):
-            return {"status": "needs_clarification", "summary": result["preference_error"]}
 
         plan = self._planner.itinerary
         reply = result["messages"][-1]

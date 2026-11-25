@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CalendarDays, Check, ChevronDown, CircleAlert, LoaderCircle, LocateFixed, Mic, MicOff, Send, Sparkles,
+  CalendarDays, Check, ChevronDown, CircleAlert, LoaderCircle, Mic, MicOff, Send, Sparkles,
   Volume2, X,
 } from "lucide-react";
 import { costRange, duration, ItineraryPanel, rupees } from "./itinerary";
@@ -15,15 +15,14 @@ function MiraMark() {
   return <span className="mira-mark" aria-hidden="true"><Sparkles size="54%" strokeWidth={1.7} /></span>;
 }
 
-function PreferencesPanel({ prefs, startingLabel }: { prefs: Preferences; startingLabel: string | null }) {
+function PreferencesPanel({ prefs }: { prefs: Preferences }) {
   const values = [
-    { label: "City", value: prefs.city },
-    { label: "Starting point", value: startingLabel ?? (prefs.start_at_first_stop ? "First stop" : "") },
+    { label: "Location", value: [prefs.locality, prefs.city].filter(Boolean).join(", ") },
     { label: "Budget", value: prefs.budget !== undefined ? rupees(prefs.budget) : "" },
     { label: "Time available", value: prefs.available_minutes ? duration(prefs.available_minutes) : "" },
     { label: "Mood", value: prefs.mood },
     { label: "Interests", value: prefs.interests?.join(", ") },
-    { label: "Other requirements", value: prefs.constraints?.join(", ") || (prefs.no_restrictions ? "None shared" : "") },
+    { label: "Other requirements", value: prefs.constraints?.join(", ") },
     { label: "Food", value: prefs.dietary && {
       vegetarian_options: "Vegetarian options",
       vegetarian_only: "Fully vegetarian kitchen",
@@ -65,7 +64,6 @@ function TracePanel({ trace, expanded }: { trace: TraceEvent[]; expanded: boolea
 export function Planner() {
   const planner = usePlanner();
   const [draft, setDraft] = useState("");
-  const [enteringStart, setEnteringStart] = useState(false);
   const input = useRef<HTMLTextAreaElement>(null);
   const transcript = useRef<HTMLDivElement>(null);
   const details = useRef<HTMLDialogElement>(null);
@@ -77,7 +75,6 @@ export function Planner() {
   const connected = planner.connection === "connected";
   const pending = planner.connection === "connecting" || planner.connection === "reconnecting";
   const started = planner.messages.length > 0 || planner.voiceStarted;
-  const needsStart = !planner.startingLabel && !planner.prefs.start_at_first_stop;
   const speaking = planner.agentStatus === "speaking" && planner.voiceStarted;
   const status = planner.micChange ? "Connecting voice…" :
     pending ? "Connecting…" :
@@ -111,25 +108,12 @@ export function Planner() {
     const submitted = draft;
     if (await planner.send(submitted)) {
       setDraft((value) => value === submitted ? "" : value);
-      setEnteringStart(false);
       input.current?.focus();
     }
   }
 
   function showDetails() {
     if (details.current && !details.current.open) details.current.showModal();
-  }
-
-  function enterStartingPoint() {
-    setEnteringStart(true);
-    setDraft((current) => current ? current : "I’ll start from ");
-    input.current?.focus();
-  }
-
-  function useCurrentLocation() {
-    setEnteringStart(false);
-    followLatest.current = true;
-    void planner.chooseStart("location");
   }
 
   return (
@@ -166,9 +150,6 @@ export function Planner() {
             <button className="talk-button" disabled={planner.micChange} onClick={() => void planner.toggleMic()}>
               {planner.micChange ? <LoaderCircle size={19} className="spinner" /> : <Mic size={19} />}
               {planner.micChange ? "Connecting…" : "Talk to Mira"}
-            </button>
-            <button type="button" className="start-link welcome-start" disabled={planner.choosingStart || pending} onClick={useCurrentLocation}>
-              <LocateFixed size={16} aria-hidden="true" /> {planner.choosingStart ? "Getting your location…" : "Use current location as my start"}
             </button>
           </div>
         ) : (
@@ -215,16 +196,6 @@ export function Planner() {
             </div>
           )}
           {planner.notice && <p className="notice" role="alert"><CircleAlert size={17} /> {planner.notice}</p>}
-          {started && needsStart && (
-            <div className="start-options" role="group" aria-label="Saturday starting point">
-              <button type="button" className="start-link" disabled={planner.choosingStart || pending} onClick={useCurrentLocation}>
-                <LocateFixed size={16} aria-hidden="true" /> {planner.choosingStart ? "Getting location…" : "Use current location"}
-              </button>
-              <button type="button" className="start-link" onClick={enterStartingPoint}>Enter another start</button>
-              <button type="button" className="start-link" disabled={planner.choosingStart || pending}
-                onClick={() => { followLatest.current = true; void planner.chooseStart("first_stop"); }}>Start at first stop</button>
-            </div>
-          )}
           <form className="composer" onSubmit={submit}>
             {started && (
               <button type="button" className={`composer-button mic-button ${planner.mic ? "mic-live" : ""}`}
@@ -235,7 +206,7 @@ export function Planner() {
             )}
             <label className="sr-only" htmlFor="planner-message">Message Mira</label>
             <textarea
-              id="planner-message" ref={input} value={draft} placeholder={enteringStart && needsStart ? "I’ll start from…" : "Message Mira…"} rows={1} maxLength={1200}
+              id="planner-message" ref={input} value={draft} placeholder="Message Mira…" rows={1} maxLength={1200}
               onChange={(event) => setDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -260,7 +231,7 @@ export function Planner() {
             <h2 id="details-title">{planner.plan ? "Your itinerary" : "Planning details"}</h2>
             <button className="composer-button close-button" aria-label="Close details" onClick={() => details.current?.close()}><X size={21} /></button>
           </div>
-          <PreferencesPanel prefs={planner.prefs} startingLabel={planner.startingLabel} />
+          <PreferencesPanel prefs={planner.prefs} />
           <TracePanel trace={planner.trace} expanded={!planner.plan} />
           {planner.plan && <ItineraryPanel plan={planner.plan} revisionNeeded={planner.revisionNeeded} />}
         </div>

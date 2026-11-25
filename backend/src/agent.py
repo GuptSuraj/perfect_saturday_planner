@@ -3,7 +3,6 @@ import json
 import logging
 import os
 from time import time
-from uuid import uuid4
 
 import httpx
 from dotenv import load_dotenv
@@ -16,10 +15,8 @@ from livekit.plugins import langchain, silero
 from graph import build_graph
 from language import romanize_caption, supported_script
 from model import planning_model
-from providers import ProviderError, Providers
-from schemas import Coordinates, Preferences
+from providers import Providers
 from state import PlannerState
-from tools import save_preferences
 from voice import VoicePlanner
 
 load_dotenv(".env.local")
@@ -77,8 +74,7 @@ async def entrypoint(ctx: JobContext):
             return False
 
     planner = PlannerState(publish)
-    providers = Providers(http)
-    graph = build_graph(planner, providers, planning_model(http))
+    graph = build_graph(planner, Providers(http), planning_model(http))
     session = AgentSession(
         llm=langchain.LLMAdapter(graph=graph, config={"recursion_limit": 28}, stream_mode="custom"),
         stt=inference.STT(model="deepgram/nova-3", language="multi", extra_kwargs={"language_hint": ["en", "hi"]}),
@@ -134,42 +130,6 @@ async def entrypoint(ctx: JobContext):
             if item.role == "user" and not supported_script(text):
                 text = "[Speech unclear]"
             publish_message(item.id, item.role, romanize_caption(text), item.created_at)
-
-    @local.register_rpc_method("planner.starting_point")
-    async def set_starting_point(data):
-        if data.caller_identity != identity or turns >= 32:
-            return "invalid"
-        if data.payload == "first_stop":
-            await save_preferences(planner, Preferences(start_at_first_stop=True))
-            text = "I’ll start at the first stop."
-        else:
-            try:
-                coordinates = Coordinates.model_validate_json(data.payload)
-            except ValueError:
-                return "invalid"
-            city = None
-            if planner.preferences.city is None:
-                try:
-                    async with asyncio.timeout(4):
-                        city = await providers.city_near(coordinates)
-                except (ProviderError, TimeoutError):
-                    pass
-            patch = Preferences(city=city) if city and planner.preferences.city is None else Preferences()
-            await save_preferences(planner, patch, device_start=coordinates)
-            text = "I’ll start from my current location."
-        await planner.record_step("starting_point", "success", "Saved your Saturday starting point.")
-        session.interrupt()
-        publish_message(uuid4().hex, "user", text, time())
-        session.generate_reply(
-            user_input=text,
-            instructions=(
-                "The user confirmed the departure using an app control. Keep it. Continue in the language they last used. "
-                f"Planner city (data): {json.dumps(planner.preferences.city)}. "
-                f"Missing personal details (data): {json.dumps(planner.missing_personal_preferences)}. "
-                "Collect any remaining information. If all details are covered, plan with the confirmed departure."
-            ),
-        )
-        return "ok"
 
     @local.register_rpc_method("planner.voice")
     async def set_voice(data):
