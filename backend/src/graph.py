@@ -10,7 +10,7 @@ from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
 from language import LANGUAGE_INSTRUCTIONS, localized
-from prompts import INSTRUCTIONS, STARTING_POINT_QUESTION, STARTING_POINT_QUESTION_HI
+from prompts import INSTRUCTIONS, intake_question
 from providers import Providers, direct_distance
 from schemas import INDIA, Language, upcoming_saturday
 from state import PlannerState
@@ -45,6 +45,7 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             "preferences": planner.preferences.model_dump(mode="json", exclude_none=True),
             "starting_point_chosen": planner.starting_point_chosen,
             "starting_point": planner.starting_label,
+            "missing_personal_preferences": planner.missing_personal_preferences,
             "last_displayed_itinerary": current.model_dump(mode="json") if current else None,
             "revision_needed": planner.revision_needed,
         }
@@ -118,14 +119,14 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
                 "messages": [ToolMessage(content=error, tool_call_id=call["id"], name=call["name"]) for call in calls],
             }
         prefs = planner.preferences
-        if (
-            names & {"search_places", "display_itinerary"} and not planner.starting_point_chosen
-            and prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
+        if names & {"search_places", "display_itinerary"} and all(
+            value is not None for value in (prefs.city, prefs.budget, prefs.available_minutes)
         ):
-            reply = localized(state.get("reply_language", "en"), STARTING_POINT_QUESTION, STARTING_POINT_QUESTION_HI)
-            get_stream_writer()(reply)
-            messages = [ToolMessage(content="Starting point needed.", tool_call_id=call["id"], name=call["name"]) for call in calls]
-            return {"messages": [*messages, AIMessage(content=reply)], "finished": True}
+            reply = intake_question(planner.starting_point_chosen, planner.missing_personal_preferences, state.get("reply_language", "en"))
+            if reply:
+                get_stream_writer()(reply)
+                messages = [ToolMessage(content="More preferences needed.", tool_call_id=call["id"], name=call["name"]) for call in calls]
+                return {"messages": [*messages, AIMessage(content=reply)], "finished": True}
         previous = planner.itinerary
         result = await tools_node.ainvoke(state)
         reply = None

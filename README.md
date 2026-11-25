@@ -58,6 +58,8 @@ Open [localhost:3000](http://localhost:3000). Select **Talk to Mira** and speak 
 
 Mira asks where Saturday will start. Choose **Use current location** and allow browser access, give a different address or landmark, or choose **Start at first stop**. The first route, travel time, and any driving estimate count toward the plan when you give a starting point.
 
+The conversation collects city, total INR budget, available time, mood, interests, and constraints such as dietary needs or avoiding crowds. Mira asks only for details the user hasn't shared and offers suggestions when the user has no preference.
+
 ## Deploy
 
 1. In `backend/`, sign in with `lk cloud auth` and select the project with `lk project set-default`. Create a worker using `lk agent create --region ap-south --secrets-file /path/to/agent-secrets.env`. Include the Maps key and optional OpenAI settings in the secret file. LiveKit Cloud injects its project credentials. The worker registers the dispatch name `perfect-saturday`. For later changes, use `lk agent deploy` from the linked backend directory.

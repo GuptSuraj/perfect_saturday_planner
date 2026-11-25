@@ -13,7 +13,7 @@ from openai.types.realtime.audio_transcription import AudioTranscription
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
 from language import LANGUAGE_INSTRUCTIONS, localized
-from prompts import STARTING_POINT_QUESTION, STARTING_POINT_QUESTION_HI
+from prompts import intake_question
 from schemas import Language, Model, Preferences, ShortText
 from state import PlannerState
 from tools import save_preferences
@@ -29,13 +29,21 @@ lists, scripted filler, repetitive affirmations, and narrating your process. If 
 is still talking, let them finish. If they interrupt or change their mind, follow the new
 thread without repeating the part they've already heard.
 
-Only ask for missing essentials: city, total INR budget, available time, and starting point. Ask for
-missing budget and time together, even when the city is already known. Understand
+Ask for missing city, total INR budget, available time, starting point, mood or energy level,
+interests, and things to keep in mind or avoid. Ask for budget and time together, then ask
+for any missing mood, interests, and constraints in one short follow-up. Combine the
+starting-point question with that prompt if it is also missing. Don't repeat answers the
+user already gave. Understand
 "all day", "the whole day", or "पूरा दिन" as eight hours, and "2K" as 2,000 rupees. Never ask for
-group size, start time, mood, or transport as a prerequisite. Assume one person
+group size, start time, or transport as a prerequisite. Assume one person
 and pick a suitable start, around 10 am for a full day. Use any preferences they offer,
 including interests, pace, travel mode, food preferences, and hard restrictions. Keep
 preferences the user already gave unless they change them.
+Ask what to keep in mind or avoid, such as dietary needs or crowds. Respect a choice
+to skip any of these questions. In preferences, record mood as "No preference" or
+interests as ["Open to suggestions"] only if the user declines those questions. Set
+no_restrictions only if the user says they have none or chooses to skip restrictions.
+Leave fields unset if the user hasn't answered them.
 Set the dietary field for any vegetarian food request, including shakahari or शाकाहारी.
 Pick vegetarian_options except when a pure-veg kitchen is expressly needed. Reflect food
 requirements in the searches too. Save required indoor and wheelchair access settings
@@ -162,8 +170,12 @@ class VoicePlanner(Agent):
                 await self._planner.record_step("update_preferences", "success", "Used the preferences you shared.")
             prefs = self._planner.preferences
             preferences_ready = prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
-            if preferences_ready and action in {"create", "revise"} and not self._planner.starting_point_chosen:
-                return {"needs_starting_point": True}
+            if preferences_ready and action in {"create", "revise"}:
+                question = intake_question(
+                    self._planner.starting_point_chosen, self._planner.missing_personal_preferences, language,
+                )
+                if question:
+                    return {"intake_question": question}
             if preferences_ready and action in {"create", "revise"} and searches:
                 history.append(AIMessage(content="", tool_calls=[
                     {"name": "search_places", "args": search.model_dump(exclude_none=True), "id": f"call_{uuid4().hex}"}
@@ -202,8 +214,8 @@ class VoicePlanner(Agent):
             if self._work is work:
                 self._work = None
 
-        if result.get("needs_starting_point"):
-            return {"status": "needs_starting_point", "summary": localized(language, STARTING_POINT_QUESTION, STARTING_POINT_QUESTION_HI)}
+        if result.get("intake_question"):
+            return {"status": "needs_preferences", "summary": result["intake_question"]}
         if result.get("preference_error"):
             return {"status": "needs_clarification", "summary": result["preference_error"]}
 

@@ -52,3 +52,13 @@ class PlannerState:
     @property
     def starting_point_chosen(self) -> bool:
         return self.starting_label is not None or self.preferences.start_at_first_stop is True
+
+    @property
+    def missing_personal_preferences(self) -> list[str]:
+        prefs = self.preferences
+        return [name for name, provided in (
+            ("mood", prefs.mood),
+            ("interests", prefs.interests),
+            ("constraints", prefs.constraints or prefs.no_restrictions or prefs.dietary or prefs.environment
+             or prefs.accessibility_required),
+        ) if not provided]

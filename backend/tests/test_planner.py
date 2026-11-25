@@ -306,8 +306,16 @@ async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
         }
         pending = await graph.ainvoke(request)
         assert "current location" in pending["messages"][-1].text
+        assert "mood" in pending["messages"][-1].text
+        assert "kya karna pasand" in pending["messages"][-1].text
+        assert "dhyaan" in pending["messages"][-1].text
         assert state.trace == []
         state.preferences.start_at_first_stop = True
+        state.preferences.mood = "Tired but wants to do something fun"
+        state.preferences.interests = ["food", "music", "walks"]
+        state.preferences.constraints = ["avoid crowded places"]
+        state.preferences.dietary = "vegetarian_options"
+        assert state.missing_personal_preferences == []
         result = await graph.ainvoke(request)
 
     assert "phir koshish" in result["messages"][-1].text

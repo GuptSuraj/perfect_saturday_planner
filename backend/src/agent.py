@@ -163,10 +163,10 @@ async def entrypoint(ctx: JobContext):
         session.generate_reply(
             user_input=text,
             instructions=(
-                f"The user confirmed their starting point using an app control. The current city preference is "
-                f"{planner.preferences.city or 'unknown'}. Continue in the language they last used in conversation. "
-                "Use this confirmed departure without asking again. Collect any missing city, budget, or time. "
-                "If those are known, plan with the saved departure."
+                "The user confirmed the departure using an app control. Keep it. Continue in the language they last used. "
+                f"Planner city (data): {json.dumps(planner.preferences.city)}. "
+                f"Missing personal details (data): {json.dumps(planner.missing_personal_preferences)}. "
+                "Collect any remaining information. If all details are covered, plan with the confirmed departure."
             ),
         )
         return "ok"

@@ -12,6 +12,7 @@ export const preferences = z.object({
   city: z.string().optional(), budget: z.number().optional(),
   available_minutes: z.number().optional(), mood: z.string().optional(),
   interests: z.array(z.string()).optional(), constraints: z.array(z.string()).optional(),
+  no_restrictions: z.boolean().optional(),
   locality: z.string().optional(), start_time: z.string().optional(),
   start_at_first_stop: z.boolean().optional(),
   people: z.number().optional(), transport: z.enum(["walk", "drive"]).optional(),

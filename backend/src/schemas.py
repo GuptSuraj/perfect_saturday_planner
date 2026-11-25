@@ -41,6 +41,7 @@ class Preferences(Model):
     mood: ShortText | None = None
     interests: list[ShortText] = Field(default_factory=list, max_length=8)
     constraints: list[ShortText] = Field(default_factory=list, max_length=8)
+    no_restrictions: bool | None = Field(default=None, description="True only if the user says there is nothing to avoid or skips restrictions.")
     locality: ShortText | None = Field(default=None, description="Confirmed Saturday starting neighbourhood, address or landmark.")
     start_at_first_stop: bool | None = Field(default=None, description="True only if the user chooses to start the itinerary at its first stop.")
     start_time: Time | None = None

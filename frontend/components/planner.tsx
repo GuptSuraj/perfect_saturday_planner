@@ -23,7 +23,7 @@ function PreferencesPanel({ prefs, startingLabel }: { prefs: Preferences; starti
     { label: "Time available", value: prefs.available_minutes ? duration(prefs.available_minutes) : "" },
     { label: "Mood", value: prefs.mood },
     { label: "Interests", value: prefs.interests?.join(", ") },
-    { label: "Other requirements", value: prefs.constraints?.join(", ") },
+    { label: "Other requirements", value: prefs.constraints?.join(", ") || (prefs.no_restrictions ? "None shared" : "") },
     { label: "Food", value: prefs.dietary && {
       vegetarian_options: "Vegetarian options",
       vegetarian_only: "Fully vegetarian kitchen",
