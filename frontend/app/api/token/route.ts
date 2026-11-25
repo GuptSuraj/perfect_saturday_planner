@@ -54,7 +54,6 @@ export async function POST(request: Request) {
 
   const identity = `guest-${randomUUID()}`;
   const roomName = `saturday-${randomUUID()}`;
-  const language = new URL(request.url).searchParams.get("language") === "hi" ? "hi" : "en";
   const token = new AccessToken(LIVEKIT_API_KEY, LIVEKIT_API_SECRET, {
     identity, name: "Guest", ttl: "5m",
   });
@@ -72,7 +71,7 @@ export async function POST(request: Request) {
     maxParticipants: 2,
     agents: [new RoomAgentDispatch({
       agentName: "perfect-saturday",
-      metadata: JSON.stringify({ identity, language }),
+      metadata: JSON.stringify({ identity }),
     })],
   });
 

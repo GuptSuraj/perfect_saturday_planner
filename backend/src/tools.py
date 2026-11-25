@@ -9,7 +9,6 @@ from typing import Annotated
 from langchain_core.tools import tool
 from pydantic import Field
 
-from language import localized
 from providers import ProviderError, Providers
 from schemas import Coordinates, Mode, Preferences, Proposal, ShortText, today_in_india
 from state import PlannerState
@@ -308,10 +307,7 @@ def make_tools(state: PlannerState, providers: Providers):
         itinerary, errors, _ = validate(state, proposal)
         if not itinerary:
             return {"status": "invalid", "errors": errors, "summary": errors[0]}
-        await state.record_step("validate_itinerary", "success", localized(
-            state.language, "Checked the schedule, budget, and preferences against the available information.",
-            "उपलब्ध जानकारी के आधार पर समय, बजट और आपकी पसंद की जाँच की।",
-        ))
+        await state.record_step("validate_itinerary", "success", "Checked the schedule, budget, and preferences.")
         if not await state.publish("itinerary", itinerary.model_dump(mode="json")):
             return {"status": "unavailable", "error": "The browser did not acknowledge the itinerary."}
         state.itinerary = itinerary

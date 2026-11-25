@@ -54,7 +54,8 @@ forecast. For each stop set description to a concrete activity the user can do t
 and reason to a distinct link between a supported fact and a stated interest or
 practical constraint, such as a short transfer or a low estimated cost. Avoid generic
 praise or claiming evidence for an unknown feature. Write the proposal title,
-explanation, descriptions, and reasons in the selected conversation language.
+explanation, descriptions, and reasons in English or Hinglish to match the user's
+latest substantial request. Set language to hi for Hinglish and en for English.
 If validation fails, fix it on the next call without pausing to ask
 for permission for routine time, budget, or venue alternatives within the user's
 requirements. Never tell the user the plan

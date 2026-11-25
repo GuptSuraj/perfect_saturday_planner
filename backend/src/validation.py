@@ -1,6 +1,7 @@
 import math
 from datetime import date, datetime, timedelta
 
+from language import romanize_caption
 from schemas import (
     INDIA, Activity, Category, Itinerary, Mode, Proposal, Route, Transit, clock,
     minutes, today_in_india, upcoming_saturday,
@@ -309,7 +310,7 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
         activities.append(Activity(
             place_id=stop.place_id, name=name, address=place.get("formattedAddress"),
             start_time=clock(start), end_time=clock(end), duration_minutes=stop.duration_minutes,
-            description=stop.description, reason=stop.reason, estimated_cost_min=low,
+            description=romanize_caption(stop.description), reason=romanize_caption(stop.reason), estimated_cost_min=low,
             estimated_cost_max=high, cost_source=cost_source, rating=place.get("rating"),
             rating_count=place.get("userRatingCount"), maps_url=maps_link(place),
             travel_to_next=travel, verification_status="verified_place" if place else "unverified",
@@ -355,8 +356,8 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
         warnings.append("Weather forecast is unavailable for the planned hours.")
     result = Itinerary(
         itinerary_id=state.itinerary_id, version=(state.itinerary.version if state.itinerary else 0) + 1,
-        title=proposal.title, city=prefs.city, date=day, budget=prefs.budget,
-        starting_leg=starting_leg, activities=activities, explanation=proposal.explanation,
+        title=romanize_caption(proposal.title), language=proposal.language, city=prefs.city, date=day, budget=prefs.budget,
+        starting_leg=starting_leg, activities=activities, explanation=romanize_caption(proposal.explanation),
         weather_summary=weather, assumptions=assumptions, warnings=warnings,
         validation_status="passed", verification_status="unverified" if proposal.generic else "grounded",
         **totals,

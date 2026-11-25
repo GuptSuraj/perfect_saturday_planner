@@ -85,7 +85,6 @@ export type Itinerary = z.infer<typeof itinerary>;
 export type Transit = z.infer<typeof transit>;
 export type TraceEvent = z.infer<typeof traceEvent>;
 export type Preferences = z.infer<typeof preferences>;
-export type Language = "en" | "hi";
 export const chatMessage = z.object({
   id: z.string(),
   role: z.enum(["assistant", "user"]),

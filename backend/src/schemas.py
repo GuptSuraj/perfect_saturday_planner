@@ -72,6 +72,7 @@ class ProposalStop(Model):
 class Proposal(Model):
     title: str = Field(min_length=1, max_length=100)
     explanation: str = Field(min_length=1, max_length=360)
+    language: Language = Field(default="en", description="en for English text, hi for romanized Hindi (Hinglish).")
     activities: list[ProposalStop] = Field(min_length=1, max_length=5)
     departure_time: Time | None = None
     end_buffer_minutes: int = Field(default=10, ge=0, le=60)
@@ -116,6 +117,7 @@ class Itinerary(Model):
     version: int
     status: Literal["draft", "accepted"] = "draft"
     title: str
+    language: Language = "en"
     city: str
     date: date
     currency: Literal["INR"] = "INR"

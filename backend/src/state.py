@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from schemas import Itinerary, Language, Preferences, Route
+from schemas import Itinerary, Preferences, Route
 
 Publish = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
@@ -12,7 +12,6 @@ Publish = Callable[[str, dict[str, Any]], Awaitable[bool]]
 @dataclass
 class PlannerState:
     publish: Publish
-    language: Language = "en"
     preferences: Preferences = field(default_factory=Preferences)
     places: dict[str, dict] = field(default_factory=dict)
     place_references: dict[str, str] = field(default_factory=dict)

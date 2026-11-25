@@ -13,10 +13,9 @@ from livekit.agents import (
 from livekit.plugins import langchain, silero
 
 from graph import build_graph
-from language import localized, repeat_request, supported_script
+from language import romanize_caption, supported_script
 from model import planning_model
 from providers import Providers
-from schemas import Language
 from state import PlannerState
 from voice import VoicePlanner
 
@@ -37,8 +36,7 @@ server.setup_fnc = prewarm
 @server.rtc_session(agent_name="perfect-saturday")
 async def entrypoint(ctx: JobContext):
     try:
-        metadata = json.loads(ctx.job.metadata)
-        identity = metadata["identity"]
+        identity = json.loads(ctx.job.metadata)["identity"]
         if not isinstance(identity, str) or not identity.startswith("guest-"):
             raise ValueError("Invalid guest identity")
     except (TypeError, ValueError, KeyError):
@@ -75,15 +73,12 @@ async def entrypoint(ctx: JobContext):
             logger.info("Planner transport failed (%s, %s)", channel, type(error).__name__)
             return False
 
-    language: Language = "hi" if metadata.get("language") == "hi" else "en"
-    planner = PlannerState(publish, language=language)
+    planner = PlannerState(publish)
     graph = build_graph(planner, Providers(http), planning_model(http))
-    stt = inference.STT(model="deepgram/nova-3", language="hi" if language == "hi" else "en-IN")
-    tts = inference.TTS(model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc", language=language)
     session = AgentSession(
         llm=langchain.LLMAdapter(graph=graph, config={"recursion_limit": 28}, stream_mode="custom"),
-        stt=stt,
-        tts=tts,
+        stt=inference.STT(model="deepgram/nova-3", language="multi", extra_kwargs={"language_hint": ["en", "hi"]}),
+        tts=inference.TTS(model="cartesia/sonic-3", voice="9626c31c-bec5-4cca-baa8-f8ba9e84c8bc"),
         vad=ctx.proc.userdata["vad"],
         turn_handling=TurnHandlingOptions(turn_detection="vad"),
         aec_warmup_duration=0.25,
@@ -106,17 +101,15 @@ async def entrypoint(ctx: JobContext):
             return
         current.interrupt()
         if turns >= 32:
-            current.say(localized(planner.language, "This chat has reached its turn limit. Start a new chat to continue.",
-                                  "इस चैट की सीमा पूरी हो गई है। जारी रखने के लिए नई चैट शुरू करें।"))
+            current.say("This chat has reached its turn limit. Start a new chat to continue.")
             return
         if len(message) > 1200:
-            current.say(localized(planner.language, "Please keep your message under 1,200 characters.",
-                                  "कृपया अपना संदेश 1,200 अक्षरों से छोटा रखें।"))
+            current.say("Please keep your message under 1,200 characters.")
             return
         message_id = (event.info.attributes or {}).get("planner.message_id") or event.info.stream_id
         publish_message(message_id, "user", message, time())
         if not supported_script(message):
-            current.say(repeat_request(planner.language))
+            current.say("I can help in English or Hindi. Could you try again in either language?")
             return
         current.generate_reply(user_input=message)
 
@@ -135,24 +128,8 @@ async def entrypoint(ctx: JobContext):
         text = item.text_content
         if text and (item.role == "assistant" or (item.role == "user" and item.transcript_confidence is not None)):
             if item.role == "user" and not supported_script(text):
-                text = localized(planner.language, "[Speech unclear]", "[आवाज़ साफ़ नहीं थी]")
-            publish_message(item.id, item.role, text, item.created_at)
-
-    @local.register_rpc_method("planner.language")
-    async def set_language(data):
-        if data.caller_identity != identity or data.payload not in {"en", "hi"}:
-            return "invalid"
-        async with voice_lock:
-            language: Language = "hi" if data.payload == "hi" else "en"
-            if language == planner.language:
-                return "ok"
-            await session.interrupt()
-            if voice_agent is not None:
-                await voice_agent.set_language(language)
-            stt.update_options(language="hi" if language == "hi" else "en-IN")
-            tts.update_options(language=language)
-            planner.language = language
-            return "ok"
+                text = "[Speech unclear]"
+            publish_message(item.id, item.role, romanize_caption(text), item.created_at)
 
     @local.register_rpc_method("planner.voice")
     async def set_voice(data):
@@ -161,10 +138,8 @@ async def entrypoint(ctx: JobContext):
             return "invalid"
         async with voice_lock:
             enabled = data.payload == "on"
-            greeting = localized(planner.language, "Hi, I’m Mira. I’m here to help you plan your Saturday.",
-                                 "नमस्ते, मैं मीरा हूँ। चलिए, आपके शनिवार की योजना बनाते हैं।")
-            question = localized(planner.language, "What city, budget and time are you working with?",
-                                 "आप किस शहर में होंगे, कितना बजट है, और आपके पास कितना समय है?")
+            greeting = "Hi, I’m Mira. I’m here to help you plan your Saturday."
+            question = "What city, budget and time are you working with?"
             if enabled and voice_agent is None and os.getenv("OPENAI_API_KEY"):
                 await session.interrupt()
                 voice_agent = VoicePlanner(
@@ -179,10 +154,10 @@ async def entrypoint(ctx: JobContext):
                 session.generate_reply(
                     tool_choice="none",
                     instructions=(
-                        f"Voice just turned on. Start with this introduction: {greeting} "
-                        + (f"Then ask: {question}"
-                           if turns == 0 else
-                           "Then give them the floor without repeating a question from the chat.")
+                        f"Voice just turned on. Start with this introduction: {greeting} Then ask: {question}"
+                        if turns == 0 else
+                        "Voice just turned on. Greet the user briefly in the language of their latest message, "
+                        "then give them the floor without repeating a question."
                     ),
                 )
             else:

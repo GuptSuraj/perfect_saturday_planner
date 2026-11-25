@@ -12,7 +12,7 @@ from livekit.plugins.openai import realtime
 from openai.types.realtime.audio_transcription import AudioTranscription
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
-from language import language_instruction, localized
+from language import LANGUAGE_INSTRUCTIONS, localized
 from schemas import Language, Model, Preferences, ShortText
 from state import PlannerState
 from tools import save_preferences
@@ -70,11 +70,13 @@ class VoicePlanner(Agent):
             "preferences": planner.preferences.model_dump(mode="json", exclude_none=True),
             "itinerary": planner.itinerary.title if planner.itinerary else None,
         }
-        self._instruction_base = f"{VOICE_INSTRUCTIONS}\nPreferences and current plan: {json.dumps(context)}"
-        self._realtime = realtime.RealtimeModel(
+        model = realtime.RealtimeModel(
             model=os.getenv("OPENAI_REALTIME_MODEL") or "gpt-realtime",
             voice=os.getenv("OPENAI_REALTIME_VOICE") or "marin",
-            input_audio_transcription=self._transcription(planner.language),
+            input_audio_transcription=AudioTranscription(
+                model="gpt-transcribe", languages=["en", "hi"],
+                prompt="Saturday planning in Indian English and Hindi. Preserve place names and rupee amounts. Do not translate.",
+            ),
             input_audio_noise_reduction="near_field",
             turn_detection=SemanticVad(
                 type="semantic_vad", eagerness="medium",
@@ -82,10 +84,10 @@ class VoicePlanner(Agent):
             ),
         )
         super().__init__(
-            instructions=f"{self._instruction_base}\n{language_instruction(planner.language)}",
+            instructions=f"{VOICE_INSTRUCTIONS}\n{LANGUAGE_INSTRUCTIONS}\nPreferences and current plan: {json.dumps(context)}",
             chat_ctx=chat_ctx,
             stt=None,
-            llm=self._realtime,
+            llm=model,
             turn_handling=TurnHandlingOptions(turn_detection="realtime_llm"),
         )
         self.ready = asyncio.Event()
@@ -93,24 +95,13 @@ class VoicePlanner(Agent):
         self._planner = planner
         self._work: asyncio.Task | None = None
 
-    @staticmethod
-    def _transcription(language: Language) -> AudioTranscription:
-        return AudioTranscription(
-            model="gpt-4o-mini-transcribe", language=language,
-            prompt=localized(language, "Indian English, including Hindi words and Indian place names.",
-                             "भारत में शनिवार की योजना पर बातचीत। हिंदी और अंग्रेज़ी शब्द, जगहों के नाम, समय और रुपये।"),
-        )
-
-    async def set_language(self, language: Language) -> None:
-        await self.update_instructions(f"{self._instruction_base}\n{language_instruction(language)}")
-        self._realtime.update_options(input_audio_transcription=self._transcription(language))
-
     async def on_enter(self) -> None:
         self.ready.set()
 
     @function_tool()
     async def plan_saturday(
         self, context: RunContext, request: str, action: Literal["create", "revise", "check", "confirm"],
+        language: Language,
         preferences: Preferences | None = None,
         searches: list[VenueSearch] | None = None,
     ) -> dict:
@@ -119,6 +110,7 @@ class VoicePlanner(Agent):
         Args:
             request: Latest user request and their relevant city, budget, time and preferences.
             action: create, revise, check, or confirm. Confirm only after explicit user approval.
+            language: Use hi for a Hindi or Hinglish planning request, en for English.
             preferences: Known city, total INR budget, and available minutes (480 for all day).
                 Include other explicitly stated preferences. Leave optional defaults unset.
             searches: For a new plan, give one or two short venue searches, covering distinct
@@ -150,9 +142,7 @@ class VoicePlanner(Agent):
                 saved = await save_preferences(self._planner, preferences, action == "revise")
                 if saved["status"] != "ok":
                     return {"messages": [AIMessage(content=saved["error"])]}
-                await self._planner.record_step("update_preferences", "success", localized(
-                    self._planner.language, "Used the preferences you shared.", "आपकी बताई पसंद और ज़रूरतों को ध्यान में रखा।",
-                ))
+                await self._planner.record_step("update_preferences", "success", "Used the preferences you shared.")
             prefs = self._planner.preferences
             preferences_ready = prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
             if preferences_ready and action in {"create", "revise"} and searches:
@@ -170,6 +160,7 @@ class VoicePlanner(Agent):
             async with asyncio.timeout(55):
                 return await self._graph.ainvoke({
                     "messages": history,
+                    "reply_language": language,
                     "preferences_recorded": preferences_ready and preferences is not None,
                 }, {"recursion_limit": 28})
 
@@ -185,7 +176,7 @@ class VoicePlanner(Agent):
         except Exception as error:
             logger.warning("Voice planning request failed: %s", type(error).__name__)
             return {"status": "unavailable", "summary": localized(
-                self._planner.language, "The search didn’t finish. Would you like me to try again?",
+                language, "The search didn’t finish. Would you like me to try again?",
                 "खोज पूरी नहीं हो सकी। क्या मैं फिर कोशिश करूँ?",
             )}
         finally:
@@ -201,7 +192,7 @@ class VoicePlanner(Agent):
             action in {"create", "revise"} and not displayed and not self._planner.last_places_failure
             and prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
         ):
-            summary = localized(self._planner.language, "I couldn’t verify a plan that fit just yet. I can try a tighter area.",
+            summary = localized(language, "I couldn’t verify a plan that fit just yet. I can try a tighter area.",
                                 "अभी आपकी ज़रूरतों के मुताबिक योजना की पुष्टि नहीं हो सकी। मैं किसी छोटे इलाके में विकल्प देख सकती हूँ।")
         return {
             "status": "complete",

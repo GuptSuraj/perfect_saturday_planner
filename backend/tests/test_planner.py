@@ -5,7 +5,7 @@ import httpx
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from graph import build_graph
-from language import supported_script
+from language import romanize_caption, supported_script
 from providers import Providers
 from schemas import Preferences, Proposal, Route, today_in_india, upcoming_saturday
 from state import PlannerState
@@ -91,6 +91,7 @@ def test_supported_transcript_scripts():
     assert supported_script("Hyderabad mein do hazaar rupaye.")
     assert not supported_script("꿈이라.")
     assert not supported_script("نگاه‌های برابر")
+    assert romanize_caption("नमस्ते, मैं Mira हूँ। Budget ₹१,०००") == "namaste, main Mira hoon. Budget ₹1,000"
 
 
 def test_budget_travel_and_dietary_hard_failures():
@@ -253,7 +254,7 @@ async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
         raise httpx.ReadTimeout("Fixture timeout", request=request)
 
     state = PlannerState(
-        publish=AsyncMock(return_value=True), language="hi",
+        publish=AsyncMock(return_value=True),
         preferences=Preferences(city="Hyderabad", budget=1000, available_minutes=180),
     )
     search = AIMessage(content="", tool_calls=[{
@@ -261,9 +262,11 @@ async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
     }])
     async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
         graph = build_graph(state, Providers(client, "fixture"), UnusedModel())
-        result = await graph.ainvoke({"messages": [HumanMessage(content="मुझे इतिहास पसंद है।"), search]})
+        result = await graph.ainvoke({
+            "messages": [HumanMessage(content="Mujhe itihaas pasand hai."), search], "reply_language": "hi",
+        })
 
-    assert "क्या मैं फिर कोशिश करूँ" in result["messages"][-1].text
+    assert "phir koshish" in result["messages"][-1].text
     assert state.itinerary is None
     assert not state.preferences.allow_unverified_plan
     assert any(step["tool"] == "search_places" and step["status"] == "warning" for step in state.trace)
