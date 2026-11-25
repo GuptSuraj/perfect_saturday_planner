@@ -7,30 +7,10 @@ import {
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-const windows = new Map<string, { count: number; expires: number }>();
-const windowMs = 10 * 60 * 1000;
 const headers = { "Cache-Control": "no-store" };
 
 function error(message: string, status: number) {
   return NextResponse.json({ error: message }, { status, headers });
-}
-
-function allow(ip: string, limit: number) {
-  const now = Date.now();
-  const current = windows.get(ip);
-  if (current && current.expires > now) {
-    if (current.count >= limit) return false;
-    current.count += 1;
-    return true;
-  }
-  if (windows.size >= 500) {
-    for (const [key, entry] of windows) {
-      if (entry.expires <= now) windows.delete(key);
-    }
-    if (windows.size >= 500) return false;
-  }
-  windows.set(ip, { count: 1, expires: now + windowMs });
-  return true;
 }
 
 export async function POST(request: Request) {
@@ -45,11 +25,6 @@ export async function POST(request: Request) {
   const { LIVEKIT_API_KEY, LIVEKIT_API_SECRET, LIVEKIT_URL } = process.env;
   if (!LIVEKIT_API_KEY || !LIVEKIT_API_SECRET || !LIVEKIT_URL) {
     return error("The planner service is currently unavailable.", 503);
-  }
-
-  const ip = request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim() || "local";
-  if (!allow(ip, process.env.NODE_ENV === "development" ? 30 : 6)) {
-    return error("Session limit reached. Please try again in a few minutes.", 429);
   }
 
   const identity = `guest-${randomUUID()}`;

@@ -74,7 +74,7 @@ API references: [Geoapify Geocoding](https://apidocs.geoapify.com/docs/geocoding
 2. In `frontend/`, run `npx vercel login` and `npx vercel link`. Add the three LiveKit values to Vercel’s production environment using the dashboard or `vercel env add` with stdin. Run `npx vercel deploy --prod`. For Git-based deployment, set `frontend` as the project’s root directory.
 3. Open the production domain in a signed-out browser session. Select **Talk to Mira** to hear her introduction, try interrupting her or asking a question during a search, and open the itinerary card. Try a second chat using only text.
 
-The token endpoint issues five-minute, room-scoped tokens. The browser can publish microphone audio and data. The public demo applies a best-effort per-instance rate limit, plus server-side session duration, turn and tool limits.
+The token endpoint issues five-minute, room-scoped tokens. The browser can publish microphone audio and data. Session starts are not rate limited. Server-side session duration, turn and tool limits still apply.
 
 [LiveKit deploy quickstart](https://docs.livekit.io/deploy/agents/quickstart/) · [LiveKit LangGraph adapter](https://docs.livekit.io/agents/models/llm/langchain/) · [Vercel CLI deployment](https://vercel.com/docs/cli/deploy)
 
@@ -96,7 +96,7 @@ Useful end-to-end prompts include a four-hour, ₹2,000 vegetarian afternoon in 
 - The MVP covers Indian cities, INR, and walking or driving. It excludes return travel and excludes travel to the first stop when the starting locality is unknown.
 - Venue pricing, crowd levels, holiday hours, and drive fares can be incomplete or variable. The UI labels uncertain values. The Places vegetarian flag only verifies that vegetarian options are listed.
 - Date-specific event discovery is outside this build. Live music availability is a venue attribute and cannot confirm a scheduled performance.
-- Sessions expire after 12 minutes. Closing a session discards its server-side state. The basic rate limit is in memory per Vercel instance.
+- Sessions expire after 12 minutes. Closing a session discards its server-side state.
 
 ## AI coding tools
 
