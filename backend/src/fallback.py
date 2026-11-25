@@ -117,7 +117,7 @@ async def generate_final_plan(state: PlannerState, maps_failure: MapsFailure, la
                 continue
             proposal = Proposal(
                 title=f"Sample Saturday in {prefs.city}"[:100], language=language, departure_time=departure,
-                explanation="Keep the stops in one area. The times and spending are planning allowances while Google Maps data is unavailable.",
+                explanation="Keep the stops in one area. The times and spending are planning allowances because live location checks failed.",
                 generic=True, end_buffer_minutes=buffer,
                 activities=[stop.model_copy(update={"duration_minutes": min(stop.duration_minutes, visit_limit)}) for stop in stops],
             )

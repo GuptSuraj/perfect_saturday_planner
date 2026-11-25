@@ -120,7 +120,7 @@ def make_tools(state: PlannerState, providers: Providers):
         """
         return await save_preferences(state, patch, request_revision)
 
-    @traced("Searching Google Places")
+    @traced("Searching location providers")
     async def search_places(
         query: ShortText,
         locality: ShortText | None = None,
@@ -133,7 +133,7 @@ def make_tools(state: PlannerState, providers: Providers):
         """
         city, city_key = state.preferences.city, state.city_key
         if not city:
-            return {"status": "invalid", "error": "Save the user's city before searching Google Places."}
+            return {"status": "invalid", "error": "Save the user's city before searching for venues."}
         locality = locality or state.preferences.locality
         bias_key = (location_bias.latitude, location_bias.longitude) if location_bias else None
         cache_key = (city_key, (locality or "").casefold(), query.casefold(), bias_key, max_results)
@@ -157,22 +157,23 @@ def make_tools(state: PlannerState, providers: Providers):
                 state.places[place_id] = {**place, **previous, "_city": city_key, "_reference": reference}
             places = [state.places[place["id"]] for place in places]
             state.searches[cache_key] = [place["id"] for place in places]
+        # A successful lookup (including no matches) is not a provider failure.
+        if city_key == state.city_key:
+            state.last_places_failure = None
         if not places:
-            if city_key == state.city_key:
-                state.last_places_failure = "No matching venues"
-            return {"status": "empty", "places": [], "summary": "Google Places found no matching venues"}
+            return {"status": "empty", "places": [], "summary": "Location search found no matching venues"}
         return {
             "status": "ok", "places": [
                 {"reference": place.get("_reference"), **{key: val for key, val in place.items() if not key.startswith("_")}}
                 for place in places
             ],
-            "summary": f"Retrieved {len(places)} Google Places results",
+            "summary": f"Retrieved {len(places)} venues from {', '.join(dict.fromkeys(place.get('data_provider', 'Google Places') for place in places))}",
         }
 
     @traced("Checking venue details")
     async def get_place_details(place_id: ShortText) -> dict:
         """Look up hours, vegetarian options, accessibility, website, price and other
-        details for a retrieved Google place ID. Live music availability is a venue
+        details for a retrieved venue ID. Live music availability is a venue
         feature and does not verify a performance on the selected Saturday.
         """
         place_id = venue_id(place_id)
@@ -185,7 +186,16 @@ def make_tools(state: PlannerState, providers: Providers):
             state.places[place_id] = place
             state.details.add(place_id)
         name = place["displayName"]["text"]
-        return {"status": "ok", "place": {k: v for k, v in place.items() if not k.startswith("_")}, "summary": f"Details checked for {name}"}
+        summary = f"Details checked for {name} via {place.get('data_provider', 'Google Places')}"
+        if place.get("supplement_provider"):
+            summary += f"; supplemented by {place['supplement_provider']} (unverified web context)"
+        for warning in ("detail_warning", "supplement_warning"):
+            if place.get(warning):
+                summary += f"; {place[warning]}"
+        return {
+            "status": "ok", "place": {k: v for k, v in place.items() if not k.startswith("_")},
+            "summary": summary,
+        }
 
     @traced("Checking the Saturday forecast")
     async def get_weather(place_id: ShortText | None = None, forecast_date: date | None = None) -> dict:
@@ -207,12 +217,15 @@ def make_tools(state: PlannerState, providers: Providers):
             try:
                 coordinates = Coordinates.model_validate(coords) if coords else await providers.geocode(city)
                 state.weather[key] = await providers.forecast(coordinates, selected_date)
+                if not coords:
+                    state.weather[key]["geocoding_source"] = providers.geocoding_sources.get(city, "city geocoding")
             except ProviderError as error:
                 state.weather[key] = {"status": "unavailable", "error": str(error)}
         forecast = state.weather[key]
         if forecast["status"] != "ok":
             return forecast
-        return {**forecast, "summary": f"Forecast retrieved for {city} from Open-Meteo"}
+        return {**forecast, "summary": f"Forecast retrieved for {city} from Open-Meteo"
+                + (f"; location from {forecast['geocoding_source']}" if forecast.get("geocoding_source") else "")}
 
     @traced("Calculating travel time")
     async def calculate_route(

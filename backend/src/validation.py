@@ -187,7 +187,7 @@ def validate(
             if route.verification_status == "approximate":
                 warnings.append("Travel from the starting locality is approximate. Allow extra time.")
             else:
-                assumptions.append(f"First route starts from the {prefs.locality} locality, using Google's address match.")
+                assumptions.append(f"First route starts from the {prefs.locality} locality, source: {route.source}.")
 
     first_travel = (starting_leg.duration_minutes or 0) if starting_leg else 0
     departure = prefs.start_time or proposal.departure_time
@@ -247,6 +247,12 @@ def validate(
                 errors.append(f"{name} is not listed as operational.")
             if not business_status:
                 stop_warnings.append("Operational status unavailable.")
+            if place.get("opening_hours_text"):
+                stop_warnings.append(f"Listed hours ({place.get('data_provider', 'venue provider')}): {place['opening_hours_text']}. Confirm applicability before visiting.")
+            if place.get("detail_warning"):
+                stop_warnings.append(place["detail_warning"])
+            for evidence in place.get("venue_information", []):
+                stop_warnings.append(f"Additional venue information via Tavily (unverified; check venue and branch): {evidence['url']}")
             opening, source = opening_check(place, day, start, end)
             if opening is False:
                 errors.append(f"{name} is closed during that visit according to {source} opening hours.")
@@ -262,7 +268,7 @@ def validate(
             if proposal.generic:
                 stop_warnings.append("Confirm your dietary requirements directly before choosing a venue.")
             elif prefs.dietary == "vegetarian_options" and place.get("servesVegetarianFood") is True:
-                stop_warnings.append("Google lists vegetarian options. Confirm menu and preparation details.")
+                stop_warnings.append(f"{place.get('data_provider', 'Google Places')} lists vegetarian options. Confirm menu and preparation details.")
             else:
                 errors.append(f"The required dietary options are not verified for {name}.")
 

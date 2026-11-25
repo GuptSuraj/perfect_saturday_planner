@@ -24,10 +24,10 @@ Mira groups missing essentials into a short question and drafts with one person 
 | Tool | What it does |
 | --- | --- |
 | `update_preferences` | Merges partial preference updates and flags an itinerary for revision. |
-| `search_places` | Fetches and grounds venues from Google Places API (New). |
+| `search_places` | Fetches real venues from Google Places, falling back to Geoapify Places. |
 | `get_place_details` | Checks hours, price, operating status, accessibility, and listed venue features. |
 | `get_weather` | Gets a local hourly forecast from Open-Meteo for the selected Saturday. |
-| `calculate_route` | Gets a walking or driving estimate from Google Routes, with a labelled approximation where possible. |
+| `calculate_route` | Gets a Google Routes or Geoapify route, with a labelled approximation if both fail. |
 | `estimate_cost` | Calculates group costs and contingency using provider prices or estimated ranges. |
 | `validate_itinerary` | Checks venue data, relevant constraints, budget, hours, weather, travel, and scheduling conflicts. |
 | `display_itinerary` | Revalidates and publishes an itinerary only when the browser acknowledges it. |
@@ -35,9 +35,9 @@ Mira groups missing essentials into a short question and drafts with one person 
 
 ## Run locally
 
-Use Python 3.12 with `uv` and Node.js 24 with `npm`. Generate a LiveKit Cloud project key and enable Google Places API (New) and Google Routes API in the same billed Google Cloud project.
+Use Python 3.12 with `uv` and Node.js 24 with `npm`. Generate a LiveKit Cloud project key and a Geoapify API key. Google Places API (New) and Google Routes API are optional; enable them in a billed Google Cloud project if you also want to use Google.
 
-1. Copy `backend/.env.example` to `backend/.env.local` and `frontend/.env.example` to `frontend/.env.local`. Use the same `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` in both. Put the Google Maps key in the backend file. All credentials are server-side.
+1. Copy `backend/.env.example` to `backend/.env.local` and `frontend/.env.example` to `frontend/.env.local`. Use the same `LIVEKIT_URL`, `LIVEKIT_API_KEY`, and `LIVEKIT_API_SECRET` in both. Set `GEOAPIFY_API_KEY` in the backend file. Optionally set `GOOGLE_MAPS_API_KEY` and `TAVILY_API_KEY` there. All credentials are server-side.
 2. Set `OPENAI_API_KEY` in the backend for OpenAI Realtime and GPT-5-mini. Set `OPENAI_REALTIME_MODEL` or `OPENAI_REALTIME_VOICE` to override the `gpt-realtime` and `marin` defaults. `OPENAI_MODEL` configures the planning model. Without an OpenAI key, the worker uses the LiveKit Inference pipeline with Deepgram, Cartesia, and GPT-5-mini.
 3. In separate terminals, run the worker and frontend.
 
@@ -54,11 +54,23 @@ npm ci
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000). Select **Talk to Mira** and speak English or Hindi, or type in English or Hinglish. The progress panel above the composer shows the current step and links to **What Mira did**. If Google Places or Routes fails, Mira automatically builds a labelled sample plan from the saved preferences using local activity and meal options and estimated travel and spending allowances. Sample plans omit venue links and ask the visitor to confirm access, hours, costs, and directions. When testing a local worker against a project that already runs a deployed worker with the same dispatch name, use a separate dispatch name to ensure the room reaches the local worker.
+Open [localhost:3000](http://localhost:3000). Select **Talk to Mira** and speak English or Hindi, or type in English or Hinglish. The progress panel above the composer shows the current step and links to **What Mira did**. If both Google and Geoapify location lookups fail, Mira automatically builds a labelled sample plan from the saved preferences using local activity and meal options and estimated travel and spending allowances. Sample plans omit venue links and ask the visitor to confirm access, hours, costs, and directions. When testing a local worker against a project that already runs a deployed worker with the same dispatch name, use a separate dispatch name to ensure the room reaches the local worker.
+
+## Location providers
+
+`GEOAPIFY_API_KEY` enables real venue discovery and address geocoding in India, plus walking/driving routes. `GOOGLE_MAPS_API_KEY` is optional. When configured, Google is tried first for venues, details and routes; HTTP 429, authorization/billing failures, network errors and other provider failures trigger Geoapify automatically. A missing Google key goes directly to Geoapify. Geoapify geocodes cities and starting localities when enabled; the existing Open-Meteo city geocoder remains available without a Geoapify key. Weather continues to come from Open-Meteo.
+
+Geoapify's category/name searches are scoped to a 3.5 km radius around the locality, city center or supplied venue coordinates and restricted to India. Its IDs are namespaced internally, and mixed-provider routes use coordinates so Geoapify IDs are never sent to Google. For a failed Google detail lookup, Geoapify details are merged only for an exact normalized venue-name match within 150 metres; otherwise the original discovery record remains, with missing details explicitly unknown. Failed route providers retain the existing labelled straight-line approximation or sample-plan behavior. Successful searches, including empty results, do not trigger sample data; a failed parallel search keeps venues from successful searches. Optional Tavily failures preserve real venues with unknown details.
+
+`TAVILY_API_KEY` optionally enables cited web searches for missing venue information during detail checks. Search snippets are returned with source URLs as **unverified web context**, never converted into verified ratings, prices, opening periods or dietary/accessibility evidence. Unavailable ratings remain null, unavailable venue prices use the existing explicitly unverified planning allowances, and OSM opening-hour expressions are retained verbatim with a reminder to confirm them. Tavily failures do not discard a real venue.
+
+The existing execution trace identifies Google, Geoapify and Tavily as used. Itinerary attribution includes **Geoapify** ([geoapify.com](https://www.geoapify.com/)) and **© OpenStreetMap contributors** ([copyright and license](https://www.openstreetmap.org/copyright)). Geoapify routing credits appear in the route source. Venue links still open Google Maps via coordinates to preserve the existing frontend link label; they do not imply that Google supplied the venue data.
+
+API references: [Geoapify Geocoding](https://apidocs.geoapify.com/docs/geocoding/forward-geocoding/), [Geoapify Places](https://apidocs.geoapify.com/docs/places/), [Geoapify Routing](https://apidocs.geoapify.com/docs/routing/), [Tavily Search](https://docs.tavily.com/documentation/api-reference/endpoint/search).
 
 ## Deploy
 
-1. In `backend/`, sign in with `lk cloud auth` and select the project with `lk project set-default`. Create a worker using `lk agent create --region ap-south --secrets-file /path/to/agent-secrets.env`. Include the Maps key and optional OpenAI settings in the secret file. LiveKit Cloud injects its project credentials. The worker registers the dispatch name `perfect-saturday`. For later changes, use `lk agent deploy` from the linked backend directory.
+1. In `backend/`, sign in with `lk cloud auth` and select the project with `lk project set-default`. Create a worker using `lk agent create --region ap-south --secrets-file /path/to/agent-secrets.env`. Include `GEOAPIFY_API_KEY`, optionally `GOOGLE_MAPS_API_KEY` and `TAVILY_API_KEY`, and optional OpenAI settings in the secret file. LiveKit Cloud injects its project credentials. The worker registers the dispatch name `perfect-saturday`. For later changes, use `lk agent deploy` from the linked backend directory.
 2. In `frontend/`, run `npx vercel login` and `npx vercel link`. Add the three LiveKit values to Vercel’s production environment using the dashboard or `vercel env add` with stdin. Run `npx vercel deploy --prod`. For Git-based deployment, set `frontend` as the project’s root directory.
 3. Open the production domain in a signed-out browser session. Select **Talk to Mira** to hear her introduction, try interrupting her or asking a question during a search, and open the itinerary card. Try a second chat using only text.
 
@@ -69,11 +81,13 @@ The token endpoint issues five-minute, room-scoped tokens. The browser can publi
 ## Verification
 
 ```sh
-(cd backend && uv run --locked pytest -q)
+(cd backend && uv run --offline --locked pytest -q)
 (cd frontend && npm ci && npm run build)
 ```
 
-The backend suite covers grounded time and cost totals, scheduling, constraints, display acknowledgement, budget revisions, weather suitability, and automatic sample plans for venue search, place details, and route failures.
+The tests block live HTTP requests and use mocked provider responses, so they consume no Geoapify, Tavily or OpenAI credits. Run `uv sync --locked` first when setting up a fresh environment.
+
+The backend suite covers Google-to-Geoapify fallback, provider routing and geocoding, unknown venue fields, optional Tavily evidence and failure isolation, attribution and traces, grounded time and cost totals, scheduling, constraints, display acknowledgement, budget revisions, weather suitability, and automatic sample plans for venue search, place details, and route failures.
 
 Useful end-to-end prompts include a four-hour, ₹2,000 vegetarian afternoon in Indiranagar, a three-hour, ₹500 outdoor plan in Hyderabad, replacing a stop with a bookstore, and reducing the budget after a plan is displayed.
 

@@ -119,6 +119,10 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
         outcomes = [json.loads(message.content) for message in result["messages"]
                     if isinstance(message.content, str) and message.content.startswith("{")]
         failure = next((item["maps_failure"] for item in outcomes if item.get("maps_failure")), None)
+        # Parallel searches may partially fail. Keep successful real venues and let
+        # the planner adjust the draft instead of replacing them with sample ideas.
+        if failure == "places" and any(item.get("status") == "ok" and item.get("places") for item in outcomes):
+            failure = None
         if failure:
             language = state.get("reply_language", "en")
             trace_id = uuid4().hex
@@ -128,17 +132,17 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
                     plan = await generate_final_plan(planner, failure, language)
                     displayed = plan is not None and await publish_itinerary(planner, plan)
             finally:
-                await planner.record_step("maps_fallback", "warning", "Google Maps data was unavailable.", event_id=trace_id)
+                await planner.record_step("maps_fallback", "warning", "Live location data was unavailable.", event_id=trace_id)
             if displayed:
                 await planner.record_step("display_itinerary", "success", "Added the sample plan to the chat.")
                 reply = localized(language,
-                    "Google Maps couldn’t finish the checks, so I added a sample plan. The locations and travel times are unverified.",
-                    "Google Maps ki jaanch poori nahi hui, isliye maine ek sample plan chat mein joda. Jagahon aur travel time ki pushti baaki hai.",
+                    "Live location checks failed, so I added a sample plan. The locations and travel times are unverified.",
+                    "Live location ki jaanch poori nahi hui, isliye maine ek sample plan chat mein joda. Jagahon aur travel time ki pushti baaki hai.",
                 )
             elif plan is None:
                 reply = localized(language,
-                    "Google Maps is unavailable, and I couldn’t fit a sample plan within those limits. Would you like to adjust the budget or time?",
-                    "Google Maps abhi available nahi hai. In limits mein sample plan bhi fit nahi hua. Kya budget ya time badalna chahenge?",
+                    "Live location data is unavailable, and I couldn’t fit a sample plan within those limits. Would you like to adjust the budget or time?",
+                    "Live location data abhi available nahi hai. In limits mein sample plan bhi fit nahi hua. Kya budget ya time badalna chahenge?",
                 )
             else:
                 reply = localized(language, "I built a sample plan, but it couldn’t reach the chat. Please try again.",

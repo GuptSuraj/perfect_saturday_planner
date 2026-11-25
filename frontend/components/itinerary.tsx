@@ -54,7 +54,7 @@ export function ItineraryPanel({ plan, revisionNeeded }: { plan: Itinerary; revi
       </div>
       {plan.verification_status === "unverified" && (
         <div className="warning-strip"><TriangleAlert size={17} />
-          {plan.maps_fallback ? "Sample plan · Google Maps unavailable" : "Rough plan · venues unverified"}
+          {plan.maps_fallback ? "Sample plan · live location data unavailable" : "Rough plan · venues unverified"}
         </div>
       )}
       <dl className="stats">
