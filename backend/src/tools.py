@@ -12,12 +12,45 @@ from pydantic import Field
 from providers import ProviderError, Providers
 from schemas import Coordinates, Mode, Preferences, Proposal, ShortText, today_in_india
 from state import PlannerState
-from validation import plan_date, starting_origin, validate
+from validation import OUTDOOR_TYPES, forecast_for, plan_date, starting_origin, validate
 
 logger = logging.getLogger(__name__)
 
 
+async def save_preferences(state: PlannerState, patch: Preferences, request_revision: bool = False) -> dict:
+    async with state.writes:
+        updates = patch.model_dump(exclude_unset=True)
+        if patch.target_date and (patch.target_date.weekday() != 5 or patch.target_date < today_in_india()):
+            return {"status": "invalid", "error": "target_date must be a Saturday on or after today in India."}
+        previous = state.preferences
+        preferences = Preferences.model_validate({**previous.model_dump(), **updates})
+        if preferences.city != previous.city:
+            state.last_places_failure = None
+            if "locality" not in updates:
+                preferences.locality = None
+        changed = previous != preferences
+        state.preferences = preferences
+        if state.itinerary and (changed or request_revision):
+            state.revision_needed = True
+        data = {
+            "preferences": preferences.model_dump(mode="json", exclude_none=True),
+            "revision_needed": state.revision_needed,
+        }
+        await state.publish("preferences", data)
+        return {"status": "ok", **data, "summary": "Preferences saved" if changed else "Preferences reviewed"}
+
 def make_tools(state: PlannerState, providers: Providers):
+    def venue_id(reference: str | None) -> str | None:
+        return state.place_references.get(reference, reference)
+
+    def resolve_venues(proposal: Proposal) -> Proposal:
+        return proposal.model_copy(update={
+            "activities": [
+                stop.model_copy(update={"place_id": venue_id(stop.place_id)})
+                for stop in proposal.activities
+            ],
+        })
+
     def traced(label: str, *, serialized: bool = False):
         def decorate(function: Callable):
             @wraps(function)
@@ -61,32 +94,14 @@ def make_tools(state: PlannerState, providers: Providers):
             return tool(wrapped)
         return decorate
 
-    @traced("Updating your preferences", serialized=True)
+    @traced("Updating your preferences")
     async def update_preferences(patch: Preferences, request_revision: bool = False) -> dict:
         """Save newly stated or corrected preferences. Send only the fields that changed.
         An explicit null clears a preference. Send complete replacement lists for interests
         and constraints. Set request_revision for a request to change the displayed plan
         even when preferences stay the same. Call alone before any city-dependent tools.
         """
-        updates = patch.model_dump(exclude_unset=True)
-        if patch.target_date and (patch.target_date.weekday() != 5 or patch.target_date < today_in_india()):
-            return {"status": "invalid", "error": "target_date must be a Saturday on or after today in India."}
-        previous = state.preferences
-        preferences = Preferences.model_validate({**previous.model_dump(), **updates})
-        if preferences.city != previous.city:
-            state.last_places_failure = None
-            if "locality" not in updates:
-                preferences.locality = None
-        changed = previous != preferences
-        state.preferences = preferences
-        if state.itinerary and (changed or request_revision):
-            state.revision_needed = True
-        data = {
-            "preferences": preferences.model_dump(mode="json", exclude_none=True),
-            "revision_needed": state.revision_needed,
-        }
-        await state.publish("preferences", data)
-        return {"status": "ok", **data, "summary": "Preferences saved" if changed else "Preferences reviewed"}
+        return await save_preferences(state, patch, request_revision)
 
     @traced("Searching Google Places")
     async def search_places(
@@ -116,14 +131,24 @@ def make_tools(state: PlannerState, providers: Providers):
                 raise
             places = [place for place in places if place["formattedAddress"].rstrip().endswith("India")]
             for place in places:
-                state.places[place["id"]] = {**place, **state.places.get(place["id"], {}), "_city": city_key}
+                place_id = place["id"]
+                previous = state.places.get(place_id, {})
+                reference = previous.get("_reference")
+                if not reference:
+                    reference = f"venue_{len(state.place_references) + 1}"
+                    state.place_references[reference] = place_id
+                state.places[place_id] = {**place, **previous, "_city": city_key, "_reference": reference}
+            places = [state.places[place["id"]] for place in places]
             state.searches[cache_key] = [place["id"] for place in places]
         if not places:
             if city_key == state.city_key:
                 state.last_places_failure = "No matching venues"
             return {"status": "empty", "places": [], "summary": "Google Places found no matching venues"}
         return {
-            "status": "ok", "places": [{key: val for key, val in place.items() if not key.startswith("_")} for place in places],
+            "status": "ok", "places": [
+                {"reference": place.get("_reference"), **{key: val for key, val in place.items() if not key.startswith("_")}}
+                for place in places
+            ],
             "summary": f"Retrieved {len(places)} Google Places results",
         }
 
@@ -133,6 +158,7 @@ def make_tools(state: PlannerState, providers: Providers):
         details for a retrieved Google place ID. Live music availability is a venue
         feature and does not verify a performance on the selected Saturday.
         """
+        place_id = venue_id(place_id)
         place = state.places.get(place_id)
         if not place or place.get("_city") != state.city_key:
             return {"status": "invalid", "error": "Use a place ID already retrieved for the current city."}
@@ -150,6 +176,7 @@ def make_tools(state: PlannerState, providers: Providers):
         Use a retrieved venue ID to get a local forecast or omit it to geocode the city.
         Omit forecast_date to use the planned Saturday.
         """
+        place_id = venue_id(place_id)
         city, city_key = state.preferences.city, state.city_key
         selected_date = forecast_date or plan_date(state)
         if not city:
@@ -180,6 +207,8 @@ def make_tools(state: PlannerState, providers: Providers):
         leg, or omit it to start from the saved locality. Uses the saved transport mode
         (walking if absent) unless overridden. Can return a labelled approximation.
         """
+        destination_place_id = venue_id(destination_place_id)
+        origin_place_id = venue_id(origin_place_id)
         destination = state.places.get(destination_place_id)
         city_key = state.city_key
         if not destination or destination.get("_city") != city_key:
@@ -215,7 +244,7 @@ def make_tools(state: PlannerState, providers: Providers):
         """Compute the proposal's activity, transportation and contingency costs for the
         full group. Prices and totals come from stored venue data or conservative estimates.
         """
-        itinerary, errors, totals = validate(state, proposal)
+        itinerary, errors, totals = validate(state, resolve_venues(proposal))
         if not totals:
             return {"status": "invalid", "error": errors[0]}
         summary = f"Estimated ₹{totals['estimated_cost_min']}–₹{totals['estimated_cost_max']}"
@@ -229,7 +258,7 @@ def make_tools(state: PlannerState, providers: Providers):
         """Check grounding, operating and opening hours, hard constraints, weather,
         overlap, travel, budget, and time. Use returned errors to adjust the proposal.
         """
-        itinerary, errors, totals = validate(state, proposal)
+        itinerary, errors, totals = validate(state, resolve_venues(proposal))
         return {
             "status": "ok" if itinerary else "invalid", "errors": errors, "totals": totals,
             "warnings": itinerary.warnings if itinerary else totals.get("warnings", []),
@@ -238,12 +267,44 @@ def make_tools(state: PlannerState, providers: Providers):
 
     @traced("Sending the itinerary to your screen", serialized=True)
     async def display_itinerary(proposal: Proposal) -> dict:
-        """Revalidate a complete itinerary proposal, send it to the browser, and only
-        commit its new version if the browser acknowledges it. Call for every plan
-        and revision. Only say that it is visible after a successful result.
-        Leave individual start times blank to schedule from the user's departure time
-        and the stored route legs. Supply start times only for intentionally fixed stops.
+        """Publish an ordered proposal using venue references returned by search_places.
+        Automatically check missing venue details, outdoor weather and route legs in
+        parallel, then validate and publish. Leave start times blank unless fixed by
+        the user. Only say that the plan is visible after a successful result.
         """
+        proposal = resolve_venues(proposal)
+        prefs = state.preferences
+        place_ids = [stop.place_id for stop in proposal.activities]
+        if not proposal.generic:
+            if any(
+                not place_id or state.places.get(place_id, {}).get("_city") != state.city_key
+                for place_id in place_ids
+            ):
+                return {
+                    "status": "invalid",
+                    "error": "Use the reference value returned by search_places for each venue.",
+                }
+            lookups = [
+                get_place_details.ainvoke({"place_id": place_id})
+                for place_id in dict.fromkeys(place_ids) if place_id not in state.details
+            ]
+            mode = prefs.transport or "walk"
+            legs = list(zip(place_ids, place_ids[1:]))
+            if prefs.locality:
+                legs.insert(0, (None, place_ids[0]))
+            lookups.extend(
+                calculate_route.ainvoke({"origin_place_id": origin, "destination_place_id": destination})
+                for origin, destination in dict.fromkeys(legs)
+                if origin != destination and (origin or starting_origin(state), destination, mode) not in state.routes
+            )
+            outdoor = next(
+                (stop for stop in proposal.activities if stop.outdoors
+                 or state.places[stop.place_id].get("primaryType") in OUTDOOR_TYPES),
+                None,
+            )
+            if outdoor and not forecast_for(state, outdoor.place_id, plan_date(state)):
+                lookups.append(get_weather.ainvoke({"place_id": outdoor.place_id}))
+            await asyncio.gather(*lookups)
         itinerary, errors, _ = validate(state, proposal)
         if not itinerary:
             return {"status": "invalid", "errors": errors, "summary": errors[0]}

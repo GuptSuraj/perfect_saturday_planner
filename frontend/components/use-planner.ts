@@ -7,7 +7,7 @@ import {
   type RemoteTrack,
 } from "livekit-client";
 import {
-  itinerary, preferenceUpdate, traceEvent,
+  chatMessage, itinerary, preferenceUpdate, traceEvent,
   type ChatItem, type Itinerary, type Message, type Preferences, type TraceEvent,
 } from "../types/planner";
 
@@ -100,18 +100,16 @@ export function usePlanner() {
 
     let signalReady!: () => void;
     const ready = new Promise<void>((resolve) => { signalReady = resolve; });
+    let orderedChat = false;
     const addMessage = (message: Message) => {
       if (epoch.current !== run || !message.text.trim()) return;
-      setMessages((items) => {
-        const existing = items.findIndex((item) => item.id === message.id);
-        if (existing < 0) return [...items, message];
-        return items.map((item, index) => index === existing ? message : item);
-      });
+      setMessages((items) => [...items.filter((item) => item.id !== message.id), message]);
     };
     const inspect = (participant: Participant) => {
       if (epoch.current !== run || !participant.isAgent) return;
       if (participant.attributes["planner.ready"] === "1") {
         agentIdentity.current = participant.identity;
+        orderedChat = participant.attributes["planner.ordered_chat"] === "1";
         setConnection("connected");
         signalReady();
       }
@@ -158,7 +156,8 @@ export function usePlanner() {
 
     room.registerTextStreamHandler("lk.transcription", async (reader, sender) => {
       try {
-        const { attributes, id } = reader.info;
+        if (orderedChat) return;
+        const { attributes, id, timestamp } = reader.info;
         const role = sender.identity === room.localParticipant.identity ? "user" : "assistant";
         // RoomIO echoes text input without a tracked audio source. We add our local
         // text after sending, so only keep transcriptions from the microphone here.
@@ -168,16 +167,25 @@ export function usePlanner() {
           let text = "";
           for await (const chunk of reader) {
             text += chunk;
-            addMessage({ id: segment, role, text });
+            if (!orderedChat) addMessage({ id: segment, role, text, timestamp });
           }
         } else {
           const text = await reader.readAll();
           if (reader.info.attributes?.["lk.transcription_final"] === "true") {
-            addMessage({ id: segment, role, text });
+            if (!orderedChat) addMessage({ id: segment, role, text, timestamp });
           }
         }
       } catch {
         // An interrupted stream can close before a transcript is complete.
+      }
+    });
+
+    room.registerTextStreamHandler("planner.chat", async (reader, sender) => {
+      try {
+        const message = chatMessage.parse(JSON.parse(await reader.readAll()));
+        if (sender.identity === agentIdentity.current) addMessage(message);
+      } catch {
+        // An invalid or interrupted stream cannot update the transcript.
       }
     });
 
@@ -211,7 +219,8 @@ export function usePlanner() {
 
     room.localParticipant.registerRpcMethod("planner.itinerary", async ({ callerIdentity, payload }) => {
       if (epoch.current !== run || callerIdentity !== agentIdentity.current) return "rejected";
-      const next = itinerary.parse(JSON.parse(payload));
+      const data = JSON.parse(payload);
+      const next = itinerary.parse(data);
       const previous = lastPlan.current;
       if (previous && (previous.itinerary_id !== next.itinerary_id || previous.version > next.version)) {
         return "rejected";
@@ -223,7 +232,10 @@ export function usePlanner() {
         if (previous?.version !== next.version) {
           setMessages((items) => [
             ...items.filter((item) => item.role !== "plan"),
-            { id: `plan-${next.version}`, role: "plan" },
+            {
+              id: `plan-${next.version}`, role: "plan",
+              timestamp: typeof data.chat_timestamp === "number" ? data.chat_timestamp : Date.now(),
+            },
           ]);
         }
       });
@@ -277,10 +289,11 @@ export function usePlanner() {
       room = await start();
       // Render immediately, before an agent response has a chance to arrive.
       const id = crypto.randomUUID();
-      setMessages((items) => [...items, { id, text: content, role: "user" }]);
+      setMessages((items) => [...items, { id, text: content, role: "user", timestamp: Date.now() }]);
       try {
         await room.localParticipant.sendText(content, {
-          topic: "lk.chat", destinationIdentities: [agentIdentity.current],
+          topic: "lk.chat", attributes: { "planner.message_id": id },
+          destinationIdentities: [agentIdentity.current],
         });
         return true;
       } catch (error) {

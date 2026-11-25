@@ -193,7 +193,7 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
     elif first.start_time:
         window_start = minutes(first.start_time) - first_travel - first.buffer_before_minutes
     else:
-        window_start = minutes("15:00")
+        window_start = minutes("10:00" if prefs.available_minutes >= 360 else "15:00")
     if prefs.start_time is None:
         assumptions.append(f"Suggested start time is {clock(max(0, window_start))} in {prefs.city}.")
     transfers = [

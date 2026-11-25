@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from time import time
 
 import httpx
 from dotenv import load_dotenv
@@ -53,11 +54,13 @@ async def entrypoint(ctx: JobContext):
     local = ctx.room.local_participant
     http = httpx.AsyncClient(timeout=httpx.Timeout(6, connect=4))
     ctx.add_shutdown_callback(http.aclose)
+    chat_updates: set[asyncio.Task] = set()
 
     async def publish(channel: str, data: dict) -> bool:
         try:
             payload = json.dumps(data, separators=(",", ":"), ensure_ascii=False)
             if channel == "itinerary":
+                payload = json.dumps({**data, "chat_timestamp": time() * 1000}, ensure_ascii=False)
                 acknowledgement = await local.perform_rpc(
                     destination_identity=identity, method="planner.itinerary",
                     payload=payload, response_timeout=3, max_round_trip_latency=3,
@@ -85,6 +88,13 @@ async def entrypoint(ctx: JobContext):
     voice_intro_sent = False
     voice_lock = asyncio.Lock()
 
+    def publish_message(message_id: str, role: str, text: str, started_at: float) -> None:
+        task = asyncio.create_task(publish("chat", {
+            "id": message_id, "role": role, "text": text, "timestamp": started_at * 1000,
+        }))
+        chat_updates.add(task)
+        task.add_done_callback(chat_updates.discard)
+
     def on_text(current: AgentSession, event: room_io.TextInputEvent):
         message = event.text.strip()
         if not message:
@@ -96,15 +106,25 @@ async def entrypoint(ctx: JobContext):
         if len(message) > 1200:
             current.say("Please keep your message under twelve hundred characters.")
             return
+        message_id = (event.info.attributes or {}).get("planner.message_id") or event.info.stream_id
+        publish_message(message_id, "user", message, time())
         current.generate_reply(user_input=message)
 
     @session.on("conversation_item_added")
     def on_item(event):
         nonlocal turns
-        if event.item.type == "message" and event.item.role == "user":
+        item = event.item
+        if item.type != "message":
+            return
+        if item.role == "user":
             turns += 1
             if turns > 32:
                 ctx.shutdown(reason="Planner conversation limit reached")
+        # Typed input already has a stream ID shared with the browser. Speech
+        # uses the item's start time, even when recognition finishes later.
+        text = item.text_content
+        if text and (item.role == "assistant" or (item.role == "user" and item.transcript_confidence is not None)):
+            publish_message(item.id, item.role, text, item.created_at)
 
     @local.register_rpc_method("planner.voice")
     async def set_voice(data):
@@ -128,7 +148,7 @@ async def entrypoint(ctx: JobContext):
                     tool_choice="none",
                     instructions=(
                         f"Voice just turned on. Start with this exact introduction: {MIRA_GREETING} "
-                        + ("Then ask which city they’ll be in and give them the floor."
+                        + ("Then ask, naturally, their city, rough budget and how much time they have."
                            if turns == 0 else
                            "Then give them the floor without repeating a question from the chat.")
                     ),
@@ -138,7 +158,10 @@ async def entrypoint(ctx: JobContext):
                 session.output.set_audio_enabled(enabled)
                 if enabled and voice_agent is None and not voice_intro_sent:
                     voice_intro_sent = True
-                    session.say(f"{MIRA_GREETING} Where will you be?" if turns == 0 else MIRA_GREETING)
+                    session.say(
+                        f"{MIRA_GREETING} What city, budget and time are you working with?"
+                        if turns == 0 else MIRA_GREETING
+                    )
             return "ok"
 
     await session.start(
@@ -153,7 +176,7 @@ async def entrypoint(ctx: JobContext):
     )
     session.input.set_audio_enabled(False)
     session.output.set_audio_enabled(False)
-    await local.set_attributes({"planner.ready": "1"})
+    await local.set_attributes({"planner.ready": "1", "planner.ordered_chat": "1"})
 
     async def time_limit():
         await asyncio.sleep(12 * 60)
@@ -163,7 +186,9 @@ async def entrypoint(ctx: JobContext):
 
     async def stop_timer():
         limit.cancel()
-        await asyncio.gather(limit, return_exceptions=True)
+        for task in chat_updates:
+            task.cancel()
+        await asyncio.gather(limit, *chat_updates, return_exceptions=True)
 
     ctx.add_shutdown_callback(stop_timer)
 

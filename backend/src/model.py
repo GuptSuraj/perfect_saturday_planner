@@ -13,6 +13,8 @@ def planning_model(client: httpx.AsyncClient) -> ChatOpenAI:
     if model.removeprefix("openai/").startswith("gpt-5"):
         common["reasoning_effort"] = "low"
     if key := os.getenv("OPENAI_API_KEY"):
+        if model.removeprefix("openai/").startswith("gpt-5-mini"):
+            common["reasoning_effort"] = "minimal"
         return ChatOpenAI(model=model.removeprefix("openai/"), api_key=key, **common)
 
     # LiveKit Inference uses an authenticated OpenAI Chat Completions gateway.

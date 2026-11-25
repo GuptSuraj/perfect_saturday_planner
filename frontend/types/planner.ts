@@ -82,5 +82,11 @@ export type Itinerary = z.infer<typeof itinerary>;
 export type Transit = z.infer<typeof transit>;
 export type TraceEvent = z.infer<typeof traceEvent>;
 export type Preferences = z.infer<typeof preferences>;
-export type Message = { id: string; role: "assistant" | "user"; text: string };
-export type ChatItem = Message | { id: string; role: "plan" };
+export const chatMessage = z.object({
+  id: z.string(),
+  role: z.enum(["assistant", "user"]),
+  text: z.string(),
+  timestamp: z.number(),
+});
+export type Message = z.infer<typeof chatMessage>;
+export type ChatItem = Message | { id: string; role: "plan"; timestamp: number };

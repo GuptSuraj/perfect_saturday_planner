@@ -1,6 +1,6 @@
 "use client";
 
-import { type FormEvent, useEffect, useRef, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
   CalendarDays, Check, ChevronDown, CircleAlert, LoaderCircle, Mic, MicOff, Send, Sparkles,
   Volume2, X,
@@ -61,6 +61,10 @@ export function Planner() {
   const transcript = useRef<HTMLDivElement>(null);
   const details = useRef<HTMLDialogElement>(null);
   const followLatest = useRef(true);
+  const messages = useMemo(
+    () => [...planner.messages].sort((a, b) => a.timestamp - b.timestamp),
+    [planner.messages],
+  );
   const connected = planner.connection === "connected";
   const pending = planner.connection === "connecting" || planner.connection === "reconnecting";
   const started = planner.messages.length > 0 || planner.voiceStarted;
@@ -136,7 +140,7 @@ export function Planner() {
               followLatest.current = log.scrollHeight - log.scrollTop - log.clientHeight < 100;
             }}>
             <div className="chat-messages">
-              {planner.messages.map((message) => (
+              {messages.map((message) => (
                 <div className={`message-row ${message.role}`} key={message.id}>
                   {message.role !== "user" && <MiraMark />}
                   {message.role === "plan" ? planner.plan && (
@@ -178,7 +182,7 @@ export function Planner() {
               <button type="button" className={`composer-button mic-button ${planner.mic ? "mic-live" : ""}`}
                 aria-label={voiceLabel} title={voiceLabel} disabled={planner.micChange}
                 onClick={() => void planner.toggleMic()}>
-                {planner.micChange ? <LoaderCircle size={19} className="spinner" /> : planner.mic ? <MicOff size={19} /> : <Mic size={19} />}
+                {planner.micChange ? <LoaderCircle size={19} className="spinner" /> : planner.mic ? <Mic size={19} /> : <MicOff size={19} />}
               </button>
             )}
             <label className="sr-only" htmlFor="planner-message">Message Mira</label>

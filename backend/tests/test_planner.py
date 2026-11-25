@@ -46,6 +46,7 @@ def make_state():
             ),
         },
     )
+    state.details.update(state.places)
     state.weather[("bengaluru", state.preferences.target_date, None)] = {"status": "unavailable"}
     return state
 
@@ -165,6 +166,44 @@ async def test_rpc_acknowledgement_controls_itinerary_and_revision():
         assert not state.revision_needed
 
 
+async def test_display_checks_the_selected_stops_before_publishing():
+    state = make_state()
+    state.details.clear()
+    state.routes.clear()
+    state.weather.clear()
+    expected = {"details", "route", "weather"}
+    requested = set()
+
+    async def lookup(request: httpx.Request):
+        host = request.url.host
+        if host == "places.googleapis.com":
+            requested.add("details")
+            return httpx.Response(200, json={"businessStatus": "OPERATIONAL"})
+        if host == "routes.googleapis.com":
+            requested.add("route")
+            return httpx.Response(200, json={"routes": [{"distanceMeters": 800, "duration": "720s"}]})
+        if host == "api.open-meteo.com":
+            requested.add("weather")
+            return httpx.Response(200, json={"hourly": {
+                "time": [f"{saturday()}T15:00"], "temperature_2m": [25],
+                "precipitation_probability": [5], "weather_code": [0],
+            }})
+        raise AssertionError(f"Unexpected lookup to {host}")
+
+    state.places["park"]["location"] = {"latitude": 12.97, "longitude": 77.59}
+    state.place_references.update({"venue_1": "cafe", "venue_2": "park"})
+    proposal = make_proposal()
+    proposal.activities[0].place_id = "venue_1"
+    proposal.activities[1].place_id = "venue_2"
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lookup)) as client:
+        display = next(tool for tool in make_tools(state, Providers(client, "fixture")) if tool.name == "display_itinerary")
+        result = await display.ainvoke({"proposal": proposal.model_dump()})
+    assert result["status"] == "ok"
+    assert requested == expected
+    assert [stop.place_id for stop in state.itinerary.activities] == ["cafe", "park"]
+    assert state.itinerary.activities[0].travel_to_next.duration_minutes == 12
+
+
 async def test_timeout_retries_once_and_generic_plan_has_no_venue_links():
     calls = 0
 
@@ -211,7 +250,7 @@ def test_outdoor_stop_needs_weather_and_rejects_high_rain():
 async def test_graph_uses_tool_results_and_emits_only_spoken_text():
     class ScriptedModel:
         def bind_tools(self, tools):
-            assert "update_preferences" in {tool.name for tool in tools}
+            assert "display_itinerary" in {tool.name for tool in tools}
             return self
 
         async def ainvoke(self, messages):

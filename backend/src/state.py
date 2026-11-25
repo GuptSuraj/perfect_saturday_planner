@@ -14,6 +14,7 @@ class PlannerState:
     publish: Publish
     preferences: Preferences = field(default_factory=Preferences)
     places: dict[str, dict] = field(default_factory=dict)
+    place_references: dict[str, str] = field(default_factory=dict)
     searches: dict[tuple, list[str]] = field(default_factory=dict)
     details: set[str] = field(default_factory=set)
     routes: dict[tuple, Route] = field(default_factory=dict)

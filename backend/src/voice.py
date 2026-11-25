@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from typing import Literal
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, HumanMessage
 from livekit.agents import Agent, RunContext, TurnHandlingOptions, function_tool
@@ -11,7 +12,9 @@ from livekit.plugins.openai import realtime
 from openai.types.realtime.audio_transcription import AudioTranscription
 from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVad
 
+from schemas import Model, Preferences, ShortText
 from state import PlannerState
+from tools import save_preferences
 
 logger = logging.getLogger(__name__)
 
@@ -24,10 +27,12 @@ lists, scripted filler, repetitive affirmations, and narrating your process. If 
 is still talking, let them finish. If they interrupt or change their mind, follow the new
 thread without repeating the part they've already heard.
 
-Help them settle on a Saturday. Ask one natural question at a time when something important
-is missing. City, total budget in INR, and how much time they have are the essentials.
-You can ask about two closely related details together if they naturally fit. Use details
-they've already mentioned. Don't make them answer a questionnaire for optional details.
+Only ask for missing essentials: city, total INR budget, and available time. Ask for
+missing budget and time together, even when the city is already known. Understand
+"all day" or "the whole day" as eight hours, and "2K" as 2,000 rupees. Never ask for
+group size, start time, mood, transport, or area as a prerequisite. Assume one person
+and pick a suitable start, around 10 am for a full day. Use any preferences they offer.
+Once the essentials are clear, start planning in that turn without another question.
 
 Chat directly for greetings and preference shifts before they're ready to plan. Call
 plan_saturday to build a real itinerary as soon as you have enough details, or when they
@@ -45,6 +50,11 @@ something is on screen or accepted when the tool reports it. When a plan is read
 one thing that fits what they wanted; the itinerary can speak for the rest. Invite a change
 when it makes sense. If the user approves it, close warmly. Do not offer bookings or payments.
 """
+
+
+class VenueSearch(Model):
+    query: ShortText
+    locality: ShortText | None = None
 
 
 class VoicePlanner(Agent):
@@ -80,12 +90,22 @@ class VoicePlanner(Agent):
     @function_tool()
     async def plan_saturday(
         self, context: RunContext, request: str, action: Literal["create", "revise", "check", "confirm"],
+        preferences: Preferences | None = None,
+        searches: list[VenueSearch] | None = None,
     ) -> dict:
         """Build, revise, check, or confirm a real Saturday itinerary in the background.
 
         Args:
             request: Latest user request and their relevant city, budget, time and preferences.
             action: create, revise, check, or confirm. Confirm only after explicit user approval.
+            preferences: Known city, total INR budget, and available minutes (480 for all day).
+                Include other explicitly stated preferences. Leave optional defaults unset.
+            searches: For a new plan, give one or two short venue searches, covering distinct
+                needs in the SAME named neighbourhood or landmark area. A city is never a
+                locality. Pick a compact area yourself unless the user gave one. For food
+                and history in Hyderabad, use "historic sites" and "affordable restaurants",
+                with "Old City around Charminar" as the locality for both.
+                For a change that needs no new venues, omit searches.
         """
         if not request.strip():
             return {"status": "needs_clarification"}
@@ -105,6 +125,17 @@ class VoicePlanner(Agent):
             if previous_work and not previous_work.done():
                 previous_work.cancel()
                 await asyncio.gather(previous_work, return_exceptions=True)
+            if preferences is not None:
+                saved = await save_preferences(self._planner, preferences, action == "revise")
+                if saved["status"] != "ok":
+                    return {"messages": [AIMessage(content=saved["error"])]}
+            prefs = self._planner.preferences
+            preferences_ready = prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
+            if preferences_ready and action in {"create", "revise"} and searches:
+                history.append(AIMessage(content="", tool_calls=[
+                    {"name": "search_places", "args": search.model_dump(exclude_none=True), "id": f"call_{uuid4().hex}"}
+                    for search in searches[:2]
+                ]))
             # Let LiveKit give the conversational model the floor while the graph works.
             if action in {"create", "revise"}:
                 await context.update(
@@ -112,8 +143,11 @@ class VoicePlanner(Agent):
                     template="{message}",
                     silent=True,
                 )
-            async with asyncio.timeout(100):
-                return await self._graph.ainvoke({"messages": history}, {"recursion_limit": 28})
+            async with asyncio.timeout(55):
+                return await self._graph.ainvoke({
+                    "messages": history,
+                    "preferences_recorded": preferences_ready and preferences is not None,
+                }, {"recursion_limit": 28})
 
         work = asyncio.create_task(run(), name="saturday-voice-research")
         self._work = work
@@ -133,11 +167,19 @@ class VoicePlanner(Agent):
 
         plan = self._planner.itinerary
         reply = result["messages"][-1]
+        displayed = plan is not None and plan is not previous_plan and not self._planner.revision_needed
+        summary = reply.text if isinstance(reply, AIMessage) else ""
+        prefs = self._planner.preferences
+        if (
+            action in {"create", "revise"} and not displayed and not self._planner.last_places_failure
+            and prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
+        ):
+            summary = "I couldn’t verify a plan that fit just yet. I can try a tighter area."
         return {
             "status": "complete",
-            "displayed": plan is not None and plan is not previous_plan and not self._planner.revision_needed,
+            "displayed": displayed,
             "accepted": plan is not None and plan.status == "accepted" and not self._planner.revision_needed,
-            "summary": reply.text if isinstance(reply, AIMessage) else "",
+            "summary": summary,
             "current_plan": (
                 {
                     "title": plan.title,

@@ -19,6 +19,8 @@ LangGraph
 
 Voice mode uses semantic turn detection so the user can pause or interrupt naturally. The conversation stays open while GPT-5-mini and LangGraph search, calculate routes, and validate the itinerary. A new planning request can replace an in-progress search. Each LiveKit room has its own graph and history. The browser validates each itinerary payload and acknowledges it over RPC before the server records the new version.
 
+Mira groups missing essentials into a short question and drafts with one person and a suggested start time when those preferences are absent. Voice can start two venue searches in parallel. The itinerary display step verifies the selected venues, routes, and outdoor forecast together. The chat orders spoken messages by when each turn began so late transcriptions appear before their replies.
+
 | Tool | What it does |
 | --- | --- |
 | `update_preferences` | Merges partial preference updates and flags an itinerary for revision. |
