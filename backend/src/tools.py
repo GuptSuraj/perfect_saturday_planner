@@ -9,6 +9,7 @@ from typing import Annotated
 from langchain_core.tools import tool
 from pydantic import Field
 
+from language import romanize_caption
 from providers import ProviderError, Providers
 from schemas import Coordinates, Mode, Preferences, Proposal, ShortText, today_in_india
 from state import PlannerState
@@ -36,7 +37,13 @@ async def save_preferences(state: PlannerState, patch: Preferences, request_revi
             "preferences": preferences.model_dump(mode="json", exclude_none=True),
             "revision_needed": state.revision_needed,
         }
-        await state.publish("preferences", data)
+        visible = data["preferences"].copy()
+        for key in ("city", "locality", "mood"):
+            if key in visible:
+                visible[key] = romanize_caption(visible[key])
+        for key in ("interests", "constraints"):
+            visible[key] = [romanize_caption(value) for value in visible[key]]
+        await state.publish("preferences", {**data, "preferences": visible})
         return {"status": "ok", **data, "summary": "Preferences saved" if changed else "Preferences reviewed"}
 
 def make_tools(state: PlannerState, providers: Providers):

@@ -45,9 +45,11 @@ class Preferences(Model):
     start_time: Time | None = None
     people: int | None = Field(default=None, ge=1, le=20)
     transport: Mode | None = None
-    dietary: Literal["vegetarian_options", "vegetarian_only", "requires_confirmation"] | None = None
-    environment: Literal["indoors", "outdoors"] | None = None
-    accessibility_required: bool | None = None
+    dietary: Literal["vegetarian_options", "vegetarian_only", "requires_confirmation"] | None = Field(
+        default=None, description="Vegetarian or shakahari food: vegetarian_options. A pure-veg kitchen: vegetarian_only. Other dietary requirements: requires_confirmation.",
+    )
+    environment: Literal["indoors", "outdoors"] | None = Field(default=None, description="Use for a required indoor or outdoor setting.")
+    accessibility_required: bool | None = Field(default=None, description="Set when wheelchair-accessible entry is required.")
     target_date: date | None = None
     allow_unverified_plan: bool | None = None
 

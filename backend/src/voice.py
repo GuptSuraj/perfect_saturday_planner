@@ -35,6 +35,10 @@ group size, start time, mood, transport, or area as a prerequisite. Assume one p
 and pick a suitable start, around 10 am for a full day. Use any preferences they offer,
 including interests, pace, travel mode, food preferences, and hard restrictions. Keep
 preferences the user already gave unless they change them.
+Set the dietary field for any vegetarian food request, including shakahari or शाकाहारी.
+Pick vegetarian_options except when a pure-veg kitchen is expressly needed. Reflect food
+requirements in the searches too. Save required indoor and wheelchair access settings
+in their dedicated fields. When speaking Hindi, use Mira's feminine first-person forms.
 Once the essentials are clear, start planning in that turn without another question.
 
 Chat directly for greetings and preference shifts before they're ready to plan. Call
@@ -112,12 +116,15 @@ class VoicePlanner(Agent):
             action: create, revise, check, or confirm. Confirm only after explicit user approval.
             language: Use hi for a Hindi or Hinglish planning request, en for English.
             preferences: Known city, total INR budget, and available minutes (480 for all day).
-                Include other explicitly stated preferences. Leave optional defaults unset.
+                Include other explicitly stated preferences in their specific fields.
+                Set dietary to vegetarian_options for vegetarian or shakahari food.
+                Leave optional defaults unset.
             searches: For a new plan, give one or two short venue searches, covering distinct
                 needs in the SAME named neighbourhood or landmark area. A city is never a
                 locality. Pick a compact area yourself unless the user gave one. For food
                 and history in Hyderabad, use "historic sites" and "affordable restaurants",
-                with "Old City around Charminar" as the locality for both.
+                with "Old City around Charminar" as the locality for both. When the user
+                asks for vegetarian food, search for affordable vegetarian restaurants.
                 For a change that needs no new venues, omit searches.
         """
         if not request.strip():
