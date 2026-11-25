@@ -11,7 +11,7 @@ from pydantic import Field
 
 from language import romanize_caption
 from providers import ProviderError, Providers
-from schemas import Coordinates, Mode, Preferences, Proposal, ShortText, today_in_india
+from schemas import Coordinates, Mode, OptionalPreference, Preferences, Proposal, ShortText, today_in_india
 from state import PlannerState
 from validation import OUTDOOR_TYPES, forecast_for, plan_date, starting_origin, validate
 
@@ -20,9 +20,15 @@ logger = logging.getLogger(__name__)
 
 async def save_preferences(
     state: PlannerState, patch: Preferences, request_revision: bool = False, *, device_start: Coordinates | None = None,
+    clear_fields: list[OptionalPreference] | None = None,
 ) -> dict:
     async with state.writes:
-        updates = patch.model_dump(exclude_unset=True)
+        updates = {
+            name: Preferences.model_fields[name].get_default(call_default_factory=True) for name in (clear_fields or [])
+        }
+        for name, value in patch.model_dump(exclude_unset=True, exclude_none=True).items():
+            if value != []:
+                updates[name] = value
         if patch.target_date and (patch.target_date.weekday() != 5 or patch.target_date < today_in_india()):
             return {"status": "invalid", "error": "target_date must be a Saturday on or after today in India."}
         if (patch.locality or "").casefold() in {"current location", "my current location", "my location", "here"}:
@@ -46,6 +52,8 @@ async def save_preferences(
         elif updates.get("start_at_first_stop") is True:
             state.device_start = None
             preferences.locality = None
+        elif "locality" in updates:
+            state.device_start = None
         changed = previous != preferences or previous_device != state.device_start
         state.preferences = preferences
         if state.itinerary and (changed or request_revision):
@@ -119,13 +127,15 @@ def make_tools(state: PlannerState, providers: Providers):
         return decorate
 
     @traced("Updating your preferences")
-    async def update_preferences(patch: Preferences, request_revision: bool = False) -> dict:
+    async def update_preferences(
+        patch: Preferences, request_revision: bool = False, clear_fields: list[OptionalPreference] | None = None,
+    ) -> dict:
         """Save newly stated or corrected preferences. Send only the fields that changed.
-        An explicit null clears a preference. Send complete replacement lists for interests
-        and constraints. Set request_revision for a request to change the displayed plan
+        Use clear_fields for preferences the user explicitly removes. Send complete replacement
+        lists for changed interests or constraints. Set request_revision for a change request
         even when preferences stay the same. Call alone before any city-dependent tools.
         """
-        return await save_preferences(state, patch, request_revision)
+        return await save_preferences(state, patch, request_revision, clear_fields=clear_fields)
 
     @traced("Searching Google Places")
     async def search_places(

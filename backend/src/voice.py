@@ -14,7 +14,7 @@ from openai.types.realtime.realtime_audio_input_turn_detection import SemanticVa
 
 from language import LANGUAGE_INSTRUCTIONS, localized
 from prompts import intake_question
-from schemas import Language, Model, Preferences, ShortText
+from schemas import Language, Model, OptionalPreference, Preferences, ShortText
 from state import PlannerState
 from tools import save_preferences
 
@@ -123,6 +123,7 @@ class VoicePlanner(Agent):
         language: Language,
         preferences: Preferences | None = None,
         searches: list[VenueSearch] | None = None,
+        clear_fields: list[OptionalPreference] | None = None,
     ) -> dict:
         """Build, revise, check, or confirm a real Saturday itinerary in the background.
 
@@ -143,6 +144,7 @@ class VoicePlanner(Agent):
                 asks for vegetarian food, search for affordable vegetarian restaurants.
                 Use the saved starting locality when appropriate. If the app has a device start,
                 omit the search locality unless the user requested an area.
+            clear_fields: Optional preferences the user explicitly asked to remove. Omit otherwise.
                 For a change that needs no new venues, omit searches.
         """
         if not request.strip():
@@ -163,8 +165,10 @@ class VoicePlanner(Agent):
             if previous_work and not previous_work.done():
                 previous_work.cancel()
                 await asyncio.gather(previous_work, return_exceptions=True)
-            if preferences is not None:
-                saved = await save_preferences(self._planner, preferences, action == "revise")
+            if preferences is not None or clear_fields:
+                saved = await save_preferences(
+                    self._planner, preferences or Preferences(), action == "revise", clear_fields=clear_fields,
+                )
                 if saved["status"] != "ok":
                     return {"preference_error": saved["error"]}
                 await self._planner.record_step("update_preferences", "success", "Used the preferences you shared.")

@@ -10,6 +10,10 @@ ShortText = Annotated[str, Field(min_length=1, max_length=110)]
 Mode = Literal["walk", "drive"]
 Language = Literal["en", "hi"]
 Category = Literal["food", "public_outdoors", "browse", "ticketed", "other"]
+OptionalPreference = Literal[
+    "mood", "interests", "constraints", "no_restrictions", "locality", "start_at_first_stop", "start_time", "people",
+    "transport", "dietary", "environment", "accessibility_required", "target_date", "allow_unverified_plan",
+]
 
 
 def today_in_india() -> date:

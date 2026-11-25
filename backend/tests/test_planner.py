@@ -95,6 +95,26 @@ def test_supported_transcript_scripts():
     assert romanize_caption("नमस्ते, मैं Mira हूँ। Budget ₹१,०००") == "namaste, main Mira hoon. Budget ₹1,000"
 
 
+async def test_followup_keeps_prior_answers_and_explicit_removals_still_work():
+    state = PlannerState(publish=AsyncMock(return_value=True))
+    await save_preferences(state, Preferences(city="Bangalore", budget=2000, available_minutes=240))
+    await save_preferences(state, Preferences(
+        city=None, budget=None, available_minutes=None, mood="Tired but wants to do something fun",
+        interests=["Food", "Music", "Walks"], constraints=["Avoid crowded places"],
+        dietary="vegetarian_options", locality="Cubbon Park Metro Station",
+    ))
+    await save_preferences(state, Preferences(mood=None, interests=[], constraints=[], locality=None))
+    assert state.preferences.city == "Bangalore"
+    assert state.preferences.budget == 2000 and state.preferences.available_minutes == 240
+    assert state.preferences.interests == ["Food", "Music", "Walks"]
+    assert state.preferences.constraints == ["Avoid crowded places"]
+    assert state.missing_personal_preferences == []
+    assert state.starting_label == "Cubbon Park Metro Station"
+    await save_preferences(state, Preferences(no_restrictions=True), clear_fields=["dietary", "constraints"])
+    assert state.preferences.dietary is None and not state.preferences.constraints
+    assert state.missing_personal_preferences == []
+
+
 def test_budget_travel_and_dietary_hard_failures():
     state = make_state()
     state.preferences.budget = 300
