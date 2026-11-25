@@ -53,7 +53,9 @@ export function ItineraryPanel({ plan, revisionNeeded }: { plan: Itinerary; revi
         <p className="plan-explanation">{plan.explanation}</p>
       </div>
       {plan.verification_status === "unverified" && (
-        <div className="warning-strip"><TriangleAlert size={17} /> Rough plan · venues unverified</div>
+        <div className="warning-strip"><TriangleAlert size={17} />
+          {plan.maps_fallback ? "Sample plan · Google Maps unavailable" : "Rough plan · venues unverified"}
+        </div>
       )}
       <dl className="stats">
         <div><dt>Estimated cost</dt><dd>{costRange(plan.estimated_cost_min, plan.estimated_cost_max)}</dd></div>

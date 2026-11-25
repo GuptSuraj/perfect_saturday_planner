@@ -11,11 +11,20 @@ from pydantic import Field
 
 from language import romanize_caption
 from providers import ProviderError, Providers
-from schemas import Coordinates, Mode, Preferences, Proposal, ShortText, today_in_india
+from schemas import Coordinates, Itinerary, MapsFailure, Mode, Preferences, Proposal, ShortText, today_in_india
 from state import PlannerState
 from validation import OUTDOOR_TYPES, forecast_for, plan_date, starting_origin, validate
 
 logger = logging.getLogger(__name__)
+MAPS_TOOLS: dict[str, MapsFailure] = {"search_places": "places", "get_place_details": "places", "calculate_route": "routes"}
+
+
+async def publish_itinerary(state: PlannerState, itinerary: Itinerary) -> bool:
+    if not await state.publish("itinerary", itinerary.model_dump(mode="json")):
+        return False
+    state.itinerary = itinerary
+    state.revision_needed = False
+    return True
 
 
 async def save_preferences(state: PlannerState, patch: Preferences, request_revision: bool = False) -> dict:
@@ -93,6 +102,8 @@ def make_tools(state: PlannerState, providers: Providers):
                 except Exception:
                     logger.exception("Planner tool failed: %s", name)
                     result = {"status": "unavailable", "error": f"{label} failed unexpectedly."}
+                if name in MAPS_TOOLS and (result["status"] == "unavailable" or result["status"] == "approximate"):
+                    result["maps_failure"] = MAPS_TOOLS[name]
                 status = "success" if result["status"] == "ok" else "warning"
                 await emit(status, result.get("summary") or result.get("error") or label)
                 return result
@@ -233,7 +244,7 @@ def make_tools(state: PlannerState, providers: Providers):
         else:
             return {"status": "invalid", "error": "No starting locality. Exclude travel to the first stop."}
         key = (origin_place_id or starting_origin(state), destination_place_id, mode)
-        if key not in state.routes:
+        if key not in state.routes or state.routes[key].verification_status != "route_estimate":
             state.routes[key] = await providers.route(
                 from_waypoint, {"placeId": destination_place_id}, mode,
                 origin.get("location"), destination.get("location"),
@@ -301,7 +312,10 @@ def make_tools(state: PlannerState, providers: Providers):
             lookups.extend(
                 calculate_route.ainvoke({"origin_place_id": origin, "destination_place_id": destination})
                 for origin, destination in dict.fromkeys(legs)
-                if origin != destination and (origin or starting_origin(state), destination, mode) not in state.routes
+                if origin != destination and (
+                    (key := (origin or starting_origin(state), destination, mode)) not in state.routes
+                    or state.routes[key].verification_status != "route_estimate"
+                )
             )
             outdoor = next(
                 (stop for stop in proposal.activities if stop.outdoors
@@ -310,15 +324,15 @@ def make_tools(state: PlannerState, providers: Providers):
             )
             if outdoor and not forecast_for(state, outdoor.place_id, plan_date(state)):
                 lookups.append(get_weather.ainvoke({"place_id": outdoor.place_id}))
-            await asyncio.gather(*lookups)
+            checked = await asyncio.gather(*lookups)
+            if failure := next((item["maps_failure"] for item in checked if "maps_failure" in item), None):
+                return {"status": "unavailable", "maps_failure": failure, "summary": "Map checks were unavailable."}
         itinerary, errors, _ = validate(state, proposal)
         if not itinerary:
             return {"status": "invalid", "errors": errors, "summary": errors[0]}
         await state.record_step("validate_itinerary", "success", "Checked the schedule, budget, and preferences.")
-        if not await state.publish("itinerary", itinerary.model_dump(mode="json")):
+        if not await publish_itinerary(state, itinerary):
             return {"status": "unavailable", "error": "The browser did not acknowledge the itinerary."}
-        state.itinerary = itinerary
-        state.revision_needed = False
         return {"status": "ok", "version": itinerary.version, "summary": f"Itinerary version {itinerary.version} displayed"}
 
     @traced("Recording your approval", serialized=True)
@@ -329,9 +343,8 @@ def make_tools(state: PlannerState, providers: Providers):
         if state.itinerary.status == "accepted":
             return {"status": "ok", "summary": "Itinerary already confirmed"}
         confirmed = state.itinerary.model_copy(update={"status": "accepted"})
-        if not await state.publish("itinerary", confirmed.model_dump(mode="json")):
+        if not await publish_itinerary(state, confirmed):
             return {"status": "unavailable", "error": "The browser did not acknowledge the confirmation."}
-        state.itinerary = confirmed
         return {"status": "ok", "summary": "Itinerary confirmed"}
 
     return [

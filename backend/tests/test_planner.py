@@ -2,8 +2,10 @@ from datetime import timedelta
 from unittest.mock import AsyncMock
 
 import httpx
+import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
+from fallback import generate_final_plan
 from graph import build_graph
 from language import romanize_caption, supported_script
 from providers import Providers
@@ -242,7 +244,8 @@ async def test_timeout_retries_once_and_generic_plan_has_no_venue_links():
     assert any(event["status"] == "warning" for event in state.trace)
 
 
-async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
+@pytest.mark.parametrize("failure", ["places", "details", "routes"])
+async def test_google_outage_displays_sample_automatically(failure):
     class UnusedModel:
         def bind_tools(self, _tools):
             return self
@@ -250,26 +253,57 @@ async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
         async def ainvoke(self, _messages):
             raise AssertionError("The outage response should not require another model call.")
 
-    async def timeout(request: httpx.Request):
-        raise httpx.ReadTimeout("Fixture timeout", request=request)
+    requested = []
 
-    state = PlannerState(
-        publish=AsyncMock(return_value=True),
-        preferences=Preferences(city="Hyderabad", budget=1000, available_minutes=180),
-    )
+    async def unavailable(request: httpx.Request):
+        requested.append(request.url.host)
+        return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
+
+    state = make_state()
+    state.preferences.budget = 1000
+    state.preferences.available_minutes = 180
+    state.preferences.interests = ["History", "food"]
+    if failure == "details":
+        state.details.clear()
+    if failure == "routes":
+        state.routes.clear()
+        state.places["cafe"]["location"] = {"latitude": 12.97, "longitude": 77.59}
+        state.places["park"]["location"] = {"latitude": 12.98, "longitude": 77.60}
     search = AIMessage(content="", tool_calls=[{
-        "name": "search_places", "args": {"query": "historic sites"}, "id": "test-outage",
+        "name": "search_places" if failure == "places" else "display_itinerary",
+        "args": {"query": "historic sites"} if failure == "places" else {"proposal": make_proposal().model_dump()},
+        "id": "test-outage",
     }])
-    async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(unavailable)) as client:
         graph = build_graph(state, Providers(client, "fixture"), UnusedModel())
         result = await graph.ainvoke({
             "messages": [HumanMessage(content="Mujhe itihaas pasand hai."), search], "reply_language": "hi",
         })
 
-    assert "phir koshish" in result["messages"][-1].text
-    assert state.itinerary is None
+    assert "sample plan" in result["messages"][-1].text
+    expected_requests = ["routes.googleapis.com"] if failure == "routes" else ["places.googleapis.com"] * (2 if failure == "details" else 1)
+    assert requested == expected_requests
+    assert state.itinerary.maps_fallback == ("routes" if failure == "routes" else "places")
+    assert state.itinerary.verification_status == "unverified"
+    assert state.itinerary.estimated_cost_max <= 1000 and state.itinerary.duration_minutes <= 180
+    assert all(stop.place_id is None and stop.maps_url is None for stop in state.itinerary.activities)
+    assert any("Vegetarian" in stop.name for stop in state.itinerary.activities)
     assert not state.preferences.allow_unverified_plan
-    assert any(step["tool"] == "search_places" and step["status"] == "warning" for step in state.trace)
+    assert any(step["tool"] == "maps_fallback" and step["status"] == "warning" for step in state.trace)
+
+
+async def test_sample_plan_respects_a_zero_budget_and_short_indoor_window():
+    state = make_state()
+    state.preferences.budget = 0
+    state.preferences.available_minutes = 15
+    state.preferences.environment = "indoors"
+    state.preferences.interests = ["Music"]
+    state.preferences.accessibility_required = True
+    plan = await generate_final_plan(state, "places", "en")
+    assert plan is not None
+    assert plan.duration_minutes == 15 and plan.estimated_cost_max == 0
+    assert "music" in plan.activities[0].name
+    assert any("step-free" in warning for warning in plan.activities[0].warnings)
 
 
 def test_outdoor_stop_needs_weather_and_rejects_high_rain():

@@ -54,7 +54,7 @@ npm ci
 npm run dev
 ```
 
-Open [localhost:3000](http://localhost:3000). Select **Talk to Mira** and speak English or Hindi, or type in English or Hinglish. Mira follows your language as you switch during the conversation. Open the itinerary to see the preferences Mira used, each stop's timing, cost and reason, and completed steps under **What Mira did**. If the venue lookup is unavailable, Mira offers to retry or build a clearly labelled rough plan with your approval. When testing a local worker against a project that already runs a deployed worker with the same dispatch name, use a separate project to ensure the room reaches the local worker.
+Open [localhost:3000](http://localhost:3000). Select **Talk to Mira** and speak English or Hindi, or type in English or Hinglish. The progress panel above the composer shows the current step and links to **What Mira did**. If Google Places or Routes fails, Mira automatically builds a labelled sample plan from the saved preferences using local activity and meal options and estimated travel and spending allowances. Sample plans omit venue links and ask the visitor to confirm access, hours, costs, and directions. When testing a local worker against a project that already runs a deployed worker with the same dispatch name, use a separate dispatch name to ensure the room reaches the local worker.
 
 ## Deploy
 
@@ -73,7 +73,7 @@ The token endpoint issues five-minute, room-scoped tokens. The browser can publi
 (cd frontend && npm ci && npm run build)
 ```
 
-The backend suite covers grounded time and cost totals, automatic scheduling around routes, hard constraints, regular and date-specific hours, display acknowledgement, budget revisions, weather suitability, and a simulated Places timeout with a labelled generic fallback. It also tests the graph routing a model tool call through its tool node.
+The backend suite covers grounded time and cost totals, scheduling, constraints, display acknowledgement, budget revisions, weather suitability, and automatic sample plans for venue search, place details, and route failures.
 
 Useful end-to-end prompts include a four-hour, ₹2,000 vegetarian afternoon in Indiranagar, a three-hour, ₹500 outdoor plan in Hyderabad, replacing a stop with a bookstore, and reducing the budget after a plan is displayed.
 

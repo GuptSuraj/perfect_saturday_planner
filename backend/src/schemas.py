@@ -10,6 +10,7 @@ ShortText = Annotated[str, Field(min_length=1, max_length=110)]
 Mode = Literal["walk", "drive"]
 Language = Literal["en", "hi"]
 Category = Literal["food", "public_outdoors", "browse", "ticketed", "other"]
+MapsFailure = Literal["places", "routes"]
 
 
 def today_in_india() -> date:
@@ -141,3 +142,4 @@ class Itinerary(Model):
     warnings: list[str]
     validation_status: Literal["passed"]
     verification_status: Literal["grounded", "unverified"]
+    maps_fallback: MapsFailure | None = None

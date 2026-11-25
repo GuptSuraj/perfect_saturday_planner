@@ -79,6 +79,7 @@ export const itinerary = z.object({
   warnings: z.array(z.string()),
   validation_status: z.literal("passed"),
   verification_status: z.enum(["grounded", "unverified"]),
+  maps_fallback: z.enum(["places", "routes"]).nullish(),
 });
 
 export type Itinerary = z.infer<typeof itinerary>;

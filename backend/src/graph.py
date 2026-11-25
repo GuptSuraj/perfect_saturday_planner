@@ -3,18 +3,20 @@ import json
 import logging
 from datetime import datetime
 from itertools import combinations
+from uuid import uuid4
 
 from langchain_core.messages import AIMessage, SystemMessage, ToolMessage
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
+from fallback import generate_final_plan
 from language import LANGUAGE_INSTRUCTIONS, localized
 from prompts import INSTRUCTIONS
 from providers import Providers, direct_distance
 from schemas import INDIA, Language, upcoming_saturday
 from state import PlannerState
-from tools import make_tools
+from tools import make_tools, publish_itinerary
 
 logger = logging.getLogger(__name__)
 MAX_CALLS_PER_TURN = 20
@@ -28,6 +30,7 @@ class TurnState(MessagesState):
     finished: bool
     preferences_recorded: bool
     reply_language: Language
+    maps_fallback_attempted: bool
 
 
 def build_graph(planner: PlannerState, providers: Providers, chat_model):
@@ -113,29 +116,46 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
         previous = planner.itinerary
         result = await tools_node.ainvoke(state)
         reply = None
-        if planner.itinerary is not previous:
+        outcomes = [json.loads(message.content) for message in result["messages"]
+                    if isinstance(message.content, str) and message.content.startswith("{")]
+        failure = next((item["maps_failure"] for item in outcomes if item.get("maps_failure")), None)
+        if failure:
+            language = state.get("reply_language", "en")
+            trace_id = uuid4().hex
+            try:
+                await planner.record_step("maps_fallback", "running", "Building a sample plan", event_id=trace_id)
+                async with planner.writes:
+                    plan = await generate_final_plan(planner, failure, language)
+                    displayed = plan is not None and await publish_itinerary(planner, plan)
+            finally:
+                await planner.record_step("maps_fallback", "warning", "Google Maps data was unavailable.", event_id=trace_id)
+            if displayed:
+                await planner.record_step("display_itinerary", "success", "Added the sample plan to the chat.")
+                reply = localized(language,
+                    "Google Maps couldn’t finish the checks, so I added a sample plan. The locations and travel times are unverified.",
+                    "Google Maps ki jaanch poori nahi hui, isliye maine ek sample plan chat mein joda. Jagahon aur travel time ki pushti baaki hai.",
+                )
+            elif plan is None:
+                reply = localized(language,
+                    "Google Maps is unavailable, and I couldn’t fit a sample plan within those limits. Would you like to adjust the budget or time?",
+                    "Google Maps abhi available nahi hai. In limits mein sample plan bhi fit nahi hua. Kya budget ya time badalna chahenge?",
+                )
+            else:
+                reply = localized(language, "I built a sample plan, but it couldn’t reach the chat. Please try again.",
+                                  "Sample plan bana liya, lekin chat tak nahi pahucha. Phir se koshish karein.")
+        elif planner.itinerary is not previous:
             language = state.get("reply_language", planner.itinerary.language)
             if planner.itinerary.status == "accepted":
                 reply = localized(language, "Your Saturday plan is confirmed.", "Aapka Saturday plan pakka hai.")
             else:
                 reply = localized(language, "Your Saturday plan is ready. I’ve added it to the chat.",
                                   "Saturday ka plan taiyaar hai. Maine use chat mein jod diya hai.")
-        elif names == {"search_places"} and not any(place.get("_city") == planner.city_key for place in planner.places.values()):
-            outcomes = [json.loads(message.content) for message in result["messages"]
-                        if isinstance(message.content, str) and message.content.startswith("{")]
-            if len(outcomes) == len(calls) and all(item.get("status") == "unavailable" for item in outcomes):
-                planner.last_places_failure = "Venue lookup unavailable"
-                reply = localized(
-                    state.get("reply_language", "en"),
-                    "I couldn’t check places right now. Would you like me to retry or give you a rough plan without verified venues?",
-                    "Abhi jagahon ki jaankari nahi mil saki. Main phir koshish karoon ya bina verified jagahon ke ek rough plan doon?",
-                )
         if reply:
             get_stream_writer()(reply)
             result["messages"].append(AIMessage(content=reply))
         return {
             **result, "calls": state.get("calls", 0) + len(calls),
-            "finished": reply is not None,
+            "finished": reply is not None, "maps_fallback_attempted": bool(failure),
         }
 
     graph = StateGraph(TurnState)

@@ -3,7 +3,7 @@ from datetime import date, datetime, timedelta
 
 from language import romanize_caption
 from schemas import (
-    INDIA, Activity, Category, Itinerary, Mode, Proposal, Route, Transit, clock,
+    INDIA, Activity, Category, Itinerary, MapsFailure, Mode, Proposal, Route, Transit, clock,
     minutes, today_in_india, upcoming_saturday,
 )
 from state import PlannerState
@@ -136,7 +136,9 @@ def hourly_window(forecast: dict, start: int, end: int) -> list[dict]:
     ]
 
 
-def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None, list[str], dict]:
+def validate(
+    state: PlannerState, proposal: Proposal, *, maps_fallback: MapsFailure | None = None,
+) -> tuple[Itinerary | None, list[str], dict]:
     prefs = state.preferences
     if prefs.city is None or prefs.budget is None or prefs.available_minutes is None:
         return None, ["Collect the city, total INR budget and available time first."], {}
@@ -160,11 +162,11 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
     assumptions.append("Prices are estimates in INR for the whole group. Return travel is excluded.")
 
     if proposal.generic:
-        if not state.last_places_failure:
+        if maps_fallback is None and not state.last_places_failure:
             errors.append("Generic plans require an unavailable or empty real-place search.")
-        if not prefs.allow_unverified_plan:
+        if maps_fallback is None and not prefs.allow_unverified_plan:
             errors.append("Offer an unverified generic plan and wait for the user's agreement.")
-        warnings.append("Unverified generic plan. Venues, prices and opening hours need independent confirmation.")
+        warnings.append("Confirm venue access, hours, prices, and directions before leaving.")
 
     if day.weekday() != 5 or day < today_in_india():
         errors.append("Choose today if it is Saturday or a future Saturday in India.")
@@ -181,7 +183,7 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
                 route = generic_leg(mode)
             routes.append(route)
             name = state.places.get(first.place_id or "", {}).get("displayName", {}).get("text")
-            starting_leg = Transit(**route.model_dump(), destination=name or "First activity")
+            starting_leg = Transit(**route.model_dump(), destination=name or first.generic_activity or "First activity")
             if route.verification_status == "approximate":
                 warnings.append("Travel from the starting locality is approximate. Allow extra time.")
             else:
@@ -231,6 +233,8 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
         if proposal.generic:
             if stop.place_id or not stop.generic_activity:
                 errors.append("Generic plans must use only unnamed activity descriptions.")
+            if prefs.accessibility_required:
+                stop_warnings.append("Confirm step-free entry, facilities, and the route before heading out.")
         elif not stop.place_id or not place or place.get("_city") != state.city_key or stop.generic_activity:
             errors.append(f"Stop {index + 1} needs a retrieved place ID in {prefs.city}.")
         elif stop.place_id in seen:
@@ -304,7 +308,7 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
             elif gap < required:
                 errors.append(f"Allow at least {required} minutes for travel and buffer after {name}.")
 
-        low, high, cost_source = activity_cost(place, category, people)
+        low, high, cost_source = (0, 0, "Free-option allowance") if maps_fallback and category == "browse" else activity_cost(place, category, people)
         if cost_source == "Unverified planning estimate":
             stop_warnings.append("Price is unverified. Check venue prices before visiting.")
         activities.append(Activity(
@@ -360,6 +364,7 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
         starting_leg=starting_leg, activities=activities, explanation=romanize_caption(proposal.explanation),
         weather_summary=weather, assumptions=assumptions, warnings=warnings,
         validation_status="passed", verification_status="unverified" if proposal.generic else "grounded",
+        maps_fallback=maps_fallback,
         **totals,
     )
     return result, [], totals

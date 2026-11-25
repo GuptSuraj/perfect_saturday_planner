@@ -2,7 +2,7 @@
 
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import {
-  CalendarDays, Check, ChevronDown, CircleAlert, LoaderCircle, Mic, MicOff, Send, Sparkles,
+  CalendarDays, Check, ChevronDown, CircleAlert, LoaderCircle, Mic, MicOff, Search, Send, Sparkles,
   Volume2, X,
 } from "lucide-react";
 import { costRange, duration, ItineraryPanel, rupees } from "./itinerary";
@@ -61,6 +61,24 @@ function TracePanel({ trace, expanded }: { trace: TraceEvent[]; expanded: boolea
   );
 }
 
+function ResearchStatus({ trace, active, showSteps }: { trace: TraceEvent[]; active: boolean; showSteps: () => void }) {
+  if (!active) return null;
+  const steps = trace.filter((event) => event.status === "running");
+  const detailedSteps = steps.filter((event) => event.tool !== "planning_request");
+  const step = detailedSteps[detailedSteps.length - 1];
+  return (
+    <section className="research-status" aria-label="Planning progress">
+      <span className="research-icon" aria-hidden="true"><Search size={17} /></span>
+      <div className="research-copy" role="status">
+        <strong>{steps.length > 0 ? "Mira is building your plan" : "Mira is thinking"}</strong>
+        {step && <span>{step.description}</span>}
+      </div>
+      {trace.length > 0 && <button className="research-link" onClick={showSteps}>View steps</button>}
+      <div className="research-progress" aria-hidden="true" />
+    </section>
+  );
+}
+
 export function Planner() {
   const planner = usePlanner();
   const [draft, setDraft] = useState("");
@@ -80,8 +98,6 @@ export function Planner() {
     pending ? "Connecting…" :
     planner.userSpeaking ? "Listening to you" :
     speaking ? "Mira is speaking" :
-    planner.working ? "Mira is checking your plan…" :
-    connected && planner.agentStatus === "thinking" ? "Mira is thinking…" :
     planner.mic ? "Listening" :
     planner.voiceStarted ? "Microphone muted" : "";
   const level = Math.min(1, Math.sqrt(planner.voiceLevel) * 1.65);
@@ -114,6 +130,12 @@ export function Planner() {
 
   function showDetails() {
     if (details.current && !details.current.open) details.current.showModal();
+  }
+
+  function showSteps() {
+    showDetails();
+    const steps = details.current?.querySelector<HTMLDetailsElement>("details.trace-panel");
+    if (steps) steps.open = true;
   }
 
   return (
@@ -167,7 +189,7 @@ export function Planner() {
                       <CalendarDays size={22} strokeWidth={1.65} aria-hidden="true" />
                       <span>
                         <strong>{planner.plan.title}</strong>
-                        <small>{duration(planner.plan.duration_minutes)} · {costRange(planner.plan.estimated_cost_min, planner.plan.estimated_cost_max)} estimated</small>
+                        <small>{planner.plan.maps_fallback && "Sample plan · "}{duration(planner.plan.duration_minutes)} · {costRange(planner.plan.estimated_cost_min, planner.plan.estimated_cost_max)} estimated</small>
                       </span>
                       <span className="plan-link">View plan</span>
                     </button>
@@ -195,6 +217,8 @@ export function Planner() {
               )}
             </div>
           )}
+          {started && <ResearchStatus trace={planner.trace} showSteps={showSteps}
+            active={connected && (planner.working || planner.agentStatus === "thinking")} />}
           {planner.notice && <p className="notice" role="alert"><CircleAlert size={17} /> {planner.notice}</p>}
           <form className="composer" onSubmit={submit}>
             {started && (

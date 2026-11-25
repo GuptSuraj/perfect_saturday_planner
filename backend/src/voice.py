@@ -56,10 +56,10 @@ or availability. The tool's displayed and accepted flags are authoritative. Only
 something is on screen or accepted when the tool reports it. When a plan is ready, mention
 one thing that fits what they wanted; the itinerary can speak for the rest. Invite a change
 when it makes sense. If the user approves it, close warmly. Do not offer bookings or payments.
-If real places could not be checked, offer to retry or build a rough plan without
-verified venues. An explicit request for that rough plan is a new create or revise action,
-not approval of the itinerary. Pass allow_unverified_plan=true and omit searches only
-when the user expressly agrees to the fallback or asks for it.
+If Google Maps fails, the planner can automatically show a sample plan. Tell the user
+it is a sample and that the venue and travel details still need checking. Offer a live
+retry if they want one. If no matching venues remain after a successful lookup, the
+user can request a generic plan. Set allow_unverified_plan only for that request.
 """
 
 
@@ -164,12 +164,25 @@ class VoicePlanner(Agent):
                     template="{message}",
                     silent=True,
                 )
-            async with asyncio.timeout(55):
-                return await self._graph.ainvoke({
-                    "messages": history,
-                    "reply_language": language,
-                    "preferences_recorded": preferences_ready and preferences is not None,
-                }, {"recursion_limit": 28})
+            trace_id = uuid4().hex if action in {"create", "revise"} else None
+            completed = False
+            try:
+                if trace_id:
+                    await self._planner.record_step("planning_request", "running", "Developing your itinerary", event_id=trace_id)
+                async with asyncio.timeout(55):
+                    result = await self._graph.ainvoke({
+                        "messages": history,
+                        "reply_language": language,
+                        "preferences_recorded": preferences_ready and preferences is not None,
+                    }, {"recursion_limit": 28})
+                completed = True
+                return result
+            finally:
+                if trace_id:
+                    await self._planner.record_step(
+                        "planning_request", "success" if completed else "warning",
+                        "Planning step finished." if completed else "Planning was interrupted.", event_id=trace_id,
+                    )
 
         work = asyncio.create_task(run(), name="saturday-voice-research")
         self._work = work
@@ -197,6 +210,7 @@ class VoicePlanner(Agent):
         prefs = self._planner.preferences
         if (
             action in {"create", "revise"} and not displayed and not self._planner.last_places_failure
+            and not result.get("maps_fallback_attempted")
             and prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
         ):
             summary = localized(language, "I couldn’t verify a plan that fit just yet. I can try a tighter area.",
@@ -212,6 +226,7 @@ class VoicePlanner(Agent):
                     "stops": [stop.name for stop in plan.activities],
                     "max_estimated_cost_inr": plan.estimated_cost_max,
                     "duration_minutes": plan.duration_minutes,
+                    "verification_status": plan.verification_status,
                 }
                 if plan is not None and not self._planner.revision_needed else None
             ),

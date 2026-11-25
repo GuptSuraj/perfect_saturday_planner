@@ -50,7 +50,8 @@ class Providers:
                 return body
             except httpx.HTTPStatusError as error:
                 status = error.response.status_code
-                retryable = status in {408, 429} or status >= 500
+                # Quota errors go straight to the sample plan.
+                retryable = status == 408 or status >= 500
                 if attempt or not retryable:
                     code = "authorization" if status in {401, 403} else "request"
                     raise ProviderError(f"{label} {code} failed (HTTP {status}).") from None

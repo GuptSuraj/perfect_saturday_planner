@@ -61,6 +61,15 @@ html:has(.chat-app), body:has(.chat-app) { overflow: hidden; overscroll-behavior
 .plan-link { flex: 0 0 auto; white-space: nowrap; text-decoration: underline; text-underline-offset: 2px; font-size: .85rem; font-weight: 650; }
 
 .chat-bottom { flex: 0 0 auto; padding-top: 4px; background: var(--surface); }
+.research-status { position: relative; overflow: hidden; display: flex; align-items: center; gap: 10px; margin: 0 0 8px; padding: 9px 10px 11px; background: var(--soft); border: 1px solid var(--border); border-radius: 11px; }
+.research-icon { display: grid; flex: 0 0 32px; height: 32px; place-items: center; background: var(--accent); border-radius: 8px; }
+.research-copy { flex: 1; min-width: 0; display: grid; line-height: 1.3; }
+.research-copy strong { font-size: .88rem; font-weight: 670; }
+.research-copy span { margin-top: 3px; color: var(--muted); font-size: .8rem; }
+.research-link { flex-shrink: 0; padding: 5px 3px; color: var(--ink); font-size: .8rem; text-decoration: underline; text-underline-offset: 3px; }
+.research-progress { position: absolute; inset: auto 0 0; height: 2px; background: var(--accent); }
+.research-progress::after { content: ""; position: absolute; inset: 0; width: 36%; background: var(--ink); opacity: .65; animation: research-sweep 1.8s ease-in-out infinite; }
+@keyframes research-sweep { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
 .voice-state { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 29px; padding: 0 5px; margin-bottom: 4px; color: var(--muted); font-size: .84rem; }
 .voice-reading, .enable-sound { display: flex; align-items: center; gap: 7px; }
 .enable-sound { text-decoration: underline; text-underline-offset: 2px; flex: 0 0 auto; }
