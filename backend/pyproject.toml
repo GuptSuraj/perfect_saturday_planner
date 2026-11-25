@@ -1,0 +1,26 @@
+[project]
+name = "perfect-saturday-agent"
+version = "0.1.0"
+description = "LiveKit and LangGraph weekend planner"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+  "livekit-agents[langchain,silero]>=1.8,<1.9",
+  "langchain-openai>=1,<2",
+  "langgraph>=1,<2",
+  "python-dotenv>=1,<2",
+  "httpx>=0.28,<1",
+  "pydantic>=2.11,<3",
+  "tzdata",
+  "livekit-plugins-openai>=1.8,<1.9",
+]
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-asyncio>=1"]
+
+[tool.uv]
+constraint-dependencies = ["yarl<1.24"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+pythonpath = ["src"]
