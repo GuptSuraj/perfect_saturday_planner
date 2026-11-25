@@ -98,6 +98,25 @@ class Providers:
             params={"languageCode": "en"},
         )
 
+    async def city_near(self, coordinates: Coordinates) -> str | None:
+        data = await self._request(
+            "Google Places", "POST", "https://places.googleapis.com/v1/places:searchNearby",
+            headers=self._google_headers("places.addressComponents"),
+            json={
+                "languageCode": "en", "rankPreference": "DISTANCE", "maxResultCount": 3,
+                "locationRestriction": {"circle": {"center": coordinates.model_dump(), "radius": 600}},
+            },
+        )
+        for place in data.get("places", []):
+            components = {kind: component for component in place.get("addressComponents", [])
+                          for kind in component.get("types", [])}
+            if components.get("country", {}).get("shortText") != "IN":
+                continue
+            for kind in ("locality", "postal_town"):
+                if city := components.get(kind, {}).get("longText"):
+                    return city
+        return None
+
     async def geocode(self, city: str) -> Coordinates:
         data = await self._request(
             "Open-Meteo geocoding", "GET", "https://geocoding-api.open-meteo.com/v1/search",

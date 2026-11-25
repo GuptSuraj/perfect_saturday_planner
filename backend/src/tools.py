@@ -18,24 +18,42 @@ from validation import OUTDOOR_TYPES, forecast_for, plan_date, starting_origin, 
 logger = logging.getLogger(__name__)
 
 
-async def save_preferences(state: PlannerState, patch: Preferences, request_revision: bool = False) -> dict:
+async def save_preferences(
+    state: PlannerState, patch: Preferences, request_revision: bool = False, *, device_start: Coordinates | None = None,
+) -> dict:
     async with state.writes:
         updates = patch.model_dump(exclude_unset=True)
         if patch.target_date and (patch.target_date.weekday() != 5 or patch.target_date < today_in_india()):
             return {"status": "invalid", "error": "target_date must be a Saturday on or after today in India."}
+        if (patch.locality or "").casefold() in {"current location", "my current location", "my location", "here"}:
+            return {"status": "invalid", "error": "Use the app's current location control or ask for a named starting point."}
         previous = state.preferences
+        previous_device = state.device_start
         preferences = Preferences.model_validate({**previous.model_dump(), **updates})
-        if preferences.city != previous.city:
+        if (preferences.city or "").casefold() != state.city_key:
             state.last_places_failure = None
-            if "locality" not in updates:
+            if previous.city and "locality" not in updates:
                 preferences.locality = None
-        changed = previous != preferences
+            if previous.city:
+                state.device_start = None
+        if device_start is not None:
+            state.device_start = device_start
+            preferences.locality = None
+            preferences.start_at_first_stop = None
+        elif updates.get("locality"):
+            state.device_start = None
+            preferences.start_at_first_stop = None
+        elif updates.get("start_at_first_stop") is True:
+            state.device_start = None
+            preferences.locality = None
+        changed = previous != preferences or previous_device != state.device_start
         state.preferences = preferences
         if state.itinerary and (changed or request_revision):
             state.revision_needed = True
         data = {
             "preferences": preferences.model_dump(mode="json", exclude_none=True),
             "revision_needed": state.revision_needed,
+            "starting_label": romanize_caption(state.starting_label) if state.starting_label else None,
         }
         visible = data["preferences"].copy()
         for key in ("city", "locality", "mood"):
@@ -123,7 +141,9 @@ def make_tools(state: PlannerState, providers: Providers):
         city, city_key = state.preferences.city, state.city_key
         if not city:
             return {"status": "invalid", "error": "Save the user's city before searching Google Places."}
-        locality = locality or state.preferences.locality
+        if not locality:
+            locality = state.preferences.locality
+            location_bias = location_bias or state.device_start
         bias_key = (location_bias.latitude, location_bias.longitude) if location_bias else None
         cache_key = (city_key, (locality or "").casefold(), query.casefold(), bias_key, max_results)
         if cache_key in state.searches:
@@ -227,6 +247,10 @@ def make_tools(state: PlannerState, providers: Providers):
             if not origin or origin.get("_city") != city_key:
                 return {"status": "invalid", "error": "Use a retrieved origin place ID in the current city."}
             from_waypoint = {"placeId": origin_place_id}
+        elif state.device_start is not None:
+            coordinates = state.device_start.model_dump()
+            origin = {"location": coordinates}
+            from_waypoint = {"location": {"latLng": coordinates}}
         elif state.preferences.locality:
             origin = {}
             from_waypoint = {"address": f"{state.preferences.locality}, {state.preferences.city}, India"}
@@ -296,7 +320,7 @@ def make_tools(state: PlannerState, providers: Providers):
             ]
             mode = prefs.transport or "walk"
             legs = list(zip(place_ids, place_ids[1:]))
-            if prefs.locality:
+            if state.starting_label:
                 legs.insert(0, (None, place_ids[0]))
             lookups.extend(
                 calculate_route.ainvoke({"origin_place_id": origin, "destination_place_id": destination})

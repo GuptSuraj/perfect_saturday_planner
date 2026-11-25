@@ -21,13 +21,13 @@ function localDate(date: string) {
   }).format(new Date(`${date}T00:00:00+05:30`));
 }
 
-function Travel({ leg, starting = false }: { leg: Transit; starting?: boolean }) {
+function Travel({ leg, from }: { leg: Transit; from?: string }) {
   const Icon = leg.mode === "walk" ? Footprints : CarFront;
   return (
     <div className="travel-leg">
       <Icon size={15} />
       <span>
-        {starting ? "From your starting locality · " : ""}
+        {from ? `From ${from} to ${leg.destination} · ` : ""}
         {leg.duration_minutes !== null ? duration(leg.duration_minutes) : "Time unavailable"}
         {" "}{leg.mode === "walk" ? "walk" : "drive"}
         {leg.distance_metres !== null && leg.distance_metres > 0 && (
@@ -66,7 +66,7 @@ export function ItineraryPanel({ plan, revisionNeeded }: { plan: Itinerary; revi
       </p>
       {plan.weather_summary && <div className="weather"><CloudSun size={22} /><div><strong>Saturday forecast</strong><p>{plan.weather_summary} <span>Open-Meteo</span></p></div></div>}
       <div className="timeline">
-        {plan.starting_leg && <Travel leg={plan.starting_leg} starting />}
+        {plan.starting_leg && <Travel leg={plan.starting_leg} from={plan.starting_label || "your starting point"} />}
         <ol>
           {plan.activities.map((stop, index) => (
             <li key={stop.place_id || index}>

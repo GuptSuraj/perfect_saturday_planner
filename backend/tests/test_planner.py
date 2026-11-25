@@ -1,3 +1,4 @@
+import json
 from datetime import timedelta
 from unittest.mock import AsyncMock
 
@@ -7,9 +8,9 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from graph import build_graph
 from language import romanize_caption, supported_script
 from providers import Providers
-from schemas import Preferences, Proposal, Route, today_in_india, upcoming_saturday
+from schemas import Coordinates, Preferences, Proposal, Route, today_in_india, upcoming_saturday
 from state import PlannerState
-from tools import make_tools
+from tools import make_tools, save_preferences
 from validation import opening_check, validate
 
 
@@ -129,6 +130,44 @@ def test_unspecified_times_are_scheduled_from_departure_and_routes():
     assert plan.travel_minutes == 19
     assert plan.buffer_minutes == 13
     assert plan.duration_minutes == 132
+
+
+async def test_device_start_routes_to_first_stop_and_can_be_replaced_by_a_named_start():
+    state = make_state()
+    origin = Coordinates(latitude=12.97, longitude=77.59)
+    proposal = make_proposal()
+    for stop in proposal.activities:
+        stop.start_time = None
+    proposal.departure_time = "14:00"
+
+    sent_origins = []
+
+    async def maps(request: httpx.Request):
+        if request.url.path.endswith("places:searchNearby"):
+            return httpx.Response(200, json={"places": [{"addressComponents": [
+                {"types": ["locality"], "longText": "Bengaluru"},
+                {"types": ["country"], "shortText": "IN"},
+            ]}]})
+        sent_origins.append(json.loads(request.content)["origin"])
+        return httpx.Response(200, json={"routes": [{"duration": "480s", "distanceMeters": 530}]})
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(maps)) as client:
+        providers = Providers(client, "fixture")
+        assert await providers.city_near(origin) == "Bengaluru"
+        await save_preferences(state, Preferences(), device_start=origin)
+        display = next(tool for tool in make_tools(state, providers) if tool.name == "display_itinerary")
+        assert (await display.ainvoke({"proposal": proposal.model_dump()}))["status"] == "ok"
+        assert state.itinerary.starting_label == "Current location"
+        assert state.itinerary.activities[0].start_time == "14:08"
+        assert state.itinerary.travel_minutes == 20
+        assert sent_origins == [{"location": {"latLng": origin.model_dump()}}]
+        assert all("latitude" not in json.dumps(call.args[1]) for call in state.publish.await_args_list)
+
+        await save_preferences(state, Preferences(locality="Indiranagar"))
+        assert state.device_start is None and state.revision_needed
+        assert (await display.ainvoke({"proposal": proposal.model_dump()}))["status"] == "ok"
+        assert state.itinerary.starting_label == "Indiranagar"
+        assert sent_origins[-1] == {"address": "Indiranagar, Bengaluru, India"}
 
 
 def test_date_specific_hours_override_regular_hours():
@@ -262,9 +301,14 @@ async def test_venue_outage_offers_recovery_in_hindi_without_inventing_a_plan():
     }])
     async with httpx.AsyncClient(transport=httpx.MockTransport(timeout)) as client:
         graph = build_graph(state, Providers(client, "fixture"), UnusedModel())
-        result = await graph.ainvoke({
+        request = {
             "messages": [HumanMessage(content="Mujhe itihaas pasand hai."), search], "reply_language": "hi",
-        })
+        }
+        pending = await graph.ainvoke(request)
+        assert "current location" in pending["messages"][-1].text
+        assert state.trace == []
+        state.preferences.start_at_first_stop = True
+        result = await graph.ainvoke(request)
 
     assert "phir koshish" in result["messages"][-1].text
     assert state.itinerary is None

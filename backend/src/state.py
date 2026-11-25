@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from schemas import Itinerary, Preferences, Route
+from schemas import Coordinates, Itinerary, Preferences, Route
 
 Publish = Callable[[str, dict[str, Any]], Awaitable[bool]]
 
@@ -13,6 +13,7 @@ Publish = Callable[[str, dict[str, Any]], Awaitable[bool]]
 class PlannerState:
     publish: Publish
     preferences: Preferences = field(default_factory=Preferences)
+    device_start: Coordinates | None = None
     places: dict[str, dict] = field(default_factory=dict)
     place_references: dict[str, str] = field(default_factory=dict)
     searches: dict[tuple, list[str]] = field(default_factory=dict)
@@ -43,3 +44,11 @@ class PlannerState:
     @property
     def locality_key(self) -> tuple[str, str]:
         return (self.city_key, (self.preferences.locality or "").casefold())
+
+    @property
+    def starting_label(self) -> str | None:
+        return "Current location" if self.device_start is not None else self.preferences.locality
+
+    @property
+    def starting_point_chosen(self) -> bool:
+        return self.starting_label is not None or self.preferences.start_at_first_stop is True

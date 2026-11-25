@@ -41,7 +41,8 @@ class Preferences(Model):
     mood: ShortText | None = None
     interests: list[ShortText] = Field(default_factory=list, max_length=8)
     constraints: list[ShortText] = Field(default_factory=list, max_length=8)
-    locality: ShortText | None = None
+    locality: ShortText | None = Field(default=None, description="Confirmed Saturday starting neighbourhood, address or landmark.")
+    start_at_first_stop: bool | None = Field(default=None, description="True only if the user chooses to start the itinerary at its first stop.")
     start_time: Time | None = None
     people: int | None = Field(default=None, ge=1, le=20)
     transport: Mode | None = None
@@ -133,6 +134,7 @@ class Itinerary(Model):
     duration_minutes: int
     travel_minutes: int
     buffer_minutes: int
+    starting_label: str | None = None
     starting_leg: Transit | None = None
     activities: list[Activity]
     explanation: str

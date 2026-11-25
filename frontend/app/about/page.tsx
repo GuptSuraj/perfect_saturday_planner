@@ -12,6 +12,7 @@ export default function About() {
         <h2>Planning sessions</h2>
         <p>Perfect Saturday uses your chat messages and preferences to build your itinerary. Voice starts when you enable your microphone. The app keeps the conversation and plan in memory for the session. There are no accounts or saved itineraries.</p>
         <p>LiveKit carries chat and audio. OpenAI processes voice and helps plan your day. Some deployments use Deepgram for transcription and Cartesia for spoken replies. Google Maps and Open-Meteo receive location queries. These providers may process data under their own terms.</p>
+        <p>If you choose to use your current location as the start, the browser asks for permission. The planner uses those coordinates during the session and sends them to Google Maps to find the nearby city and estimate travel. You can enter a different starting point or start at the first stop.</p>
         <h2>Venue and forecast information</h2>
         <p>Hours, travel times, weather, ratings, and prices may change. Check venue details before leaving. The app offers suggestions and does not make bookings or take payments.</p>
         <ul>

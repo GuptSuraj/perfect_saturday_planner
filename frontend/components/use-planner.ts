@@ -30,6 +30,8 @@ export function usePlanner() {
   const [soundBlocked, setSoundBlocked] = useState(false);
   const [messages, setMessages] = useState<ChatItem[]>([]);
   const [prefs, setPrefs] = useState<Preferences>({});
+  const [startingLabel, setStartingLabel] = useState<string | null>(null);
+  const [choosingStart, setChoosingStart] = useState(false);
   const [trace, setTrace] = useState<TraceEvent[]>([]);
   const [plan, setPlan] = useState<Itinerary | null>(null);
   const [revisionNeeded, setRevisionNeeded] = useState(false);
@@ -93,6 +95,7 @@ export function usePlanner() {
     setNotice("");
     setMessages([]);
     setPrefs({});
+    setStartingLabel(null);
     setTrace([]);
     setPlan(null);
     lastPlan.current = null;
@@ -211,6 +214,7 @@ export function usePlanner() {
         const data = preferenceUpdate.parse(JSON.parse(await reader.readAll()));
         if (epoch.current !== run || sender.identity !== agentIdentity.current) return;
         setPrefs(data.preferences);
+        setStartingLabel(data.starting_label ?? data.preferences.locality ?? null);
         setRevisionNeeded(data.revision_needed);
       } catch {
         // An invalid update leaves the last visible preferences intact.
@@ -357,6 +361,37 @@ export function usePlanner() {
     }
   }
 
+  async function chooseStart(choice: "location" | "first_stop") {
+    setNotice("");
+    setChoosingStart(true);
+    const run = epoch.current;
+    let payload = "first_stop";
+    try {
+      if (choice === "location") {
+        try {
+          const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+            if (!navigator.geolocation) return reject(new Error("Geolocation unavailable"));
+            navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 7000, maximumAge: 0 });
+          });
+          if (epoch.current !== run) return;
+          payload = JSON.stringify({ latitude: position.coords.latitude, longitude: position.coords.longitude });
+        } catch {
+          if (epoch.current === run) setNotice("Couldn’t get your location. Tell Mira your starting area or a nearby landmark.");
+          return;
+        }
+      }
+      const room = await start();
+      const result = await room.localParticipant.performRpc({
+        destinationIdentity: agentIdentity.current, method: "planner.starting_point", payload, responseTimeout: 11000,
+      });
+      if (result !== "ok") throw new Error("Starting point not saved");
+    } catch {
+      setNotice("Couldn’t save that starting point. Try again or tell Mira where you’ll start.");
+    } finally {
+      setChoosingStart(false);
+    }
+  }
+
   function enableSound() {
     const room = roomRef.current;
     if (room) void room.startAudio().catch(() => setSoundBlocked(true));
@@ -366,6 +401,6 @@ export function usePlanner() {
   return {
     connection, agentStatus, mic, voiceStarted, voiceLevel, userSpeaking, soundBlocked, messages,
     prefs, trace, plan, revisionNeeded, notice, working, sending, micChange, audioContainer,
-    end, send, toggleMic, enableSound,
+    startingLabel, choosingStart, chooseStart, end, send, toggleMic, enableSound,
   };
 }

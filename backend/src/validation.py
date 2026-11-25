@@ -73,6 +73,8 @@ def generic_leg(mode: Mode) -> Route:
 
 
 def starting_origin(state: PlannerState) -> str:
+    if state.device_start is not None:
+        return f"device:{state.device_start.latitude}:{state.device_start.longitude}"
     return f"start:{state.locality_key[0]}:{state.locality_key[1]}"
 
 
@@ -155,8 +157,10 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
         assumptions.append("Costs assume one person.")
     if prefs.transport is None:
         assumptions.append("Walking between stops.")
-    if not prefs.locality:
-        assumptions.append("Travel to the first stop is excluded because a starting locality was not provided.")
+    if prefs.start_at_first_stop:
+        assumptions.append("The day starts at the first stop as requested.")
+    elif not state.starting_label:
+        assumptions.append("Travel to the first stop is excluded because a starting point was not provided.")
     assumptions.append("Prices are estimates in INR for the whole group. Return travel is excluded.")
 
     if proposal.generic:
@@ -170,20 +174,20 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
         errors.append("Choose today if it is Saturday or a future Saturday in India.")
 
     first = proposal.activities[0]
-    if prefs.locality:
+    if state.starting_label:
         route = state.routes.get((starting_origin(state), first.place_id, mode))
         if proposal.generic:
             route = generic_leg(mode)
-        if route is None:
-            errors.append(f"Calculate a {mode} route from the starting locality to {first.place_id}.")
+        if route is None or route.duration_minutes is None:
+            errors.append(f"No usable {mode} route from the selected starting point to {first.place_id}. Try a different first stop or ask for a nearby landmark.")
         else:
-            if route.duration_minutes is None:
-                route = generic_leg(mode)
             routes.append(route)
             name = state.places.get(first.place_id or "", {}).get("displayName", {}).get("text")
             starting_leg = Transit(**route.model_dump(), destination=name or "First activity")
             if route.verification_status == "approximate":
-                warnings.append("Travel from the starting locality is approximate. Allow extra time.")
+                warnings.append("Travel from your starting point is approximate. Allow extra time.")
+            elif state.device_start is not None:
+                assumptions.append("First route starts from your confirmed current location.")
             else:
                 assumptions.append(f"First route starts from the {prefs.locality} locality, using Google's address match.")
 
@@ -357,6 +361,7 @@ def validate(state: PlannerState, proposal: Proposal) -> tuple[Itinerary | None,
     result = Itinerary(
         itinerary_id=state.itinerary_id, version=(state.itinerary.version if state.itinerary else 0) + 1,
         title=romanize_caption(proposal.title), language=proposal.language, city=prefs.city, date=day, budget=prefs.budget,
+        starting_label=romanize_caption(state.starting_label) if state.starting_label else None,
         starting_leg=starting_leg, activities=activities, explanation=romanize_caption(proposal.explanation),
         weather_summary=weather, assumptions=assumptions, warnings=warnings,
         validation_status="passed", verification_status="unverified" if proposal.generic else "grounded",

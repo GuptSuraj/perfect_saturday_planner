@@ -13,6 +13,7 @@ export const preferences = z.object({
   available_minutes: z.number().optional(), mood: z.string().optional(),
   interests: z.array(z.string()).optional(), constraints: z.array(z.string()).optional(),
   locality: z.string().optional(), start_time: z.string().optional(),
+  start_at_first_stop: z.boolean().optional(),
   people: z.number().optional(), transport: z.enum(["walk", "drive"]).optional(),
   dietary: z.enum(["vegetarian_options", "vegetarian_only", "requires_confirmation"]).optional(),
   environment: z.enum(["indoors", "outdoors"]).optional(),
@@ -23,6 +24,7 @@ export const preferences = z.object({
 export const preferenceUpdate = z.object({
   preferences,
   revision_needed: z.boolean(),
+  starting_label: z.string().nullable().optional(),
 });
 
 const transit = z.object({
@@ -52,6 +54,7 @@ export const itinerary = z.object({
   duration_minutes: z.number(),
   travel_minutes: z.number(),
   buffer_minutes: z.number(),
+  starting_label: z.string().nullable().optional(),
   starting_leg: transit.nullable(),
   activities: z.array(z.object({
     place_id: z.string().nullable(),
