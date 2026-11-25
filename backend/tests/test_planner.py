@@ -378,3 +378,25 @@ async def test_graph_uses_tool_results_and_emits_only_spoken_text():
         stream = graph.astream({"messages": [HumanMessage(content="I am in Bengaluru.")]}, stream_mode="custom")
         assert [part async for part in stream] == ["What budget would you like me to use?"]
     assert planner.preferences.city == "Bengaluru"
+
+
+async def test_graph_groups_unanswered_details_as_soon_as_basics_are_saved():
+    class ScriptedModel:
+        def bind_tools(self, _tools):
+            return self
+
+        async def ainvoke(self, messages):
+            assert not isinstance(messages[-1], ToolMessage)
+            return AIMessage(content="", tool_calls=[{
+                "name": "update_preferences",
+                "args": {"patch": {"city": "Bangalore", "budget": 2000, "available_minutes": 240}},
+                "id": "intake-update",
+            }])
+
+    state = PlannerState(publish=AsyncMock(return_value=True))
+    async with httpx.AsyncClient() as client:
+        graph = build_graph(state, Providers(client, "fixture"), ScriptedModel())
+        stream = graph.astream({"messages": [HumanMessage(content="Four hours in Bangalore with ₹2,000.")]}, stream_mode="custom")
+        reply, = [part async for part in stream]
+    assert "current location or somewhere else" in reply
+    assert "how you’re feeling" in reply and "enjoy doing" in reply and "avoid" in reply

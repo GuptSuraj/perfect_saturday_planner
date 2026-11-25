@@ -36,6 +36,12 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
     llm_with_preferences = chat_model.bind_tools([tool for tool in tools if tool.name != "update_preferences"])
     tools_node = ToolNode(tools, handle_tool_errors=True)
 
+    def next_question(state: TurnState) -> str:
+        prefs = planner.preferences
+        if any(value is None for value in (prefs.city, prefs.budget, prefs.available_minutes)):
+            return ""
+        return intake_question(planner.starting_point_chosen, planner.missing_personal_preferences, state.get("reply_language", "en"))
+
     async def decide(state: TurnState):
         now = datetime.now(INDIA)
         current = planner.itinerary
@@ -118,15 +124,10 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             return {
                 "messages": [ToolMessage(content=error, tool_call_id=call["id"], name=call["name"]) for call in calls],
             }
-        prefs = planner.preferences
-        if names & {"search_places", "display_itinerary"} and all(
-            value is not None for value in (prefs.city, prefs.budget, prefs.available_minutes)
-        ):
-            reply = intake_question(planner.starting_point_chosen, planner.missing_personal_preferences, state.get("reply_language", "en"))
-            if reply:
-                get_stream_writer()(reply)
-                messages = [ToolMessage(content="More preferences needed.", tool_call_id=call["id"], name=call["name"]) for call in calls]
-                return {"messages": [*messages, AIMessage(content=reply)], "finished": True}
+        if names & {"search_places", "display_itinerary"} and (question := next_question(state)):
+            get_stream_writer()(question)
+            messages = [ToolMessage(content="More preferences needed.", tool_call_id=call["id"], name=call["name"]) for call in calls]
+            return {"messages": [*messages, AIMessage(content=question)], "finished": True}
         previous = planner.itinerary
         result = await tools_node.ainvoke(state)
         reply = None
@@ -137,6 +138,10 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             else:
                 reply = localized(language, "Your Saturday plan is ready. I’ve added it to the chat.",
                                   "Saturday ka plan taiyaar hai. Maine use chat mein jod diya hai.")
+        elif names == {"update_preferences"}:
+            outcome = result["messages"][-1].content
+            if isinstance(outcome, str) and outcome.startswith("{") and json.loads(outcome).get("status") == "ok":
+                reply = next_question(state)
         elif names == {"search_places"} and not any(place.get("_city") == planner.city_key for place in planner.places.values()):
             outcomes = [json.loads(message.content) for message in result["messages"]
                         if isinstance(message.content, str) and message.content.startswith("{")]
@@ -152,7 +157,7 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             result["messages"].append(AIMessage(content=reply))
         return {
             **result, "calls": state.get("calls", 0) + len(calls),
-            "finished": reply is not None,
+            "finished": bool(reply),
         }
 
     graph = StateGraph(TurnState)
