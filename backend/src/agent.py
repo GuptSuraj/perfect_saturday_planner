@@ -24,6 +24,10 @@ load_dotenv()
 
 logger = logging.getLogger("perfect-saturday")
 server = AgentServer()
+WELCOME = (
+    "Hi, I’m Mira! Let’s plan your Saturday. "
+    "Which city will you be in, what’s your budget, and how much time do you have?"
+)
 
 
 def prewarm(process: JobProcess):
@@ -138,8 +142,6 @@ async def entrypoint(ctx: JobContext):
             return "invalid"
         async with voice_lock:
             enabled = data.payload == "on"
-            greeting = "Hi, I’m Mira. I’m here to help you plan your Saturday."
-            question = "What city, budget and time are you working with?"
             if enabled and voice_agent is None and os.getenv("OPENAI_API_KEY"):
                 await session.interrupt()
                 voice_agent = VoicePlanner(
@@ -151,23 +153,19 @@ async def entrypoint(ctx: JobContext):
                 await asyncio.wait_for(voice_agent.ready.wait(), timeout=8)
                 session.input.set_audio_enabled(True)
                 session.output.set_audio_enabled(True)
-                session.generate_reply(
-                    tool_choice="none",
-                    instructions=(
-                        f"Voice just turned on. Start with this introduction: {greeting} Then ask: {question}"
-                        if turns == 0 else
-                        "Voice just turned on. Greet the user briefly in the language of their latest message, "
-                        "then give them the floor without repeating a question."
-                    ),
-                )
+                if turns == 0:
+                    session.say(WELCOME)
+                else:
+                    session.generate_reply(
+                        tool_choice="none",
+                        instructions="Greet the user briefly in the language of their latest message without repeating a question.",
+                    )
             else:
                 session.input.set_audio_enabled(enabled)
                 session.output.set_audio_enabled(enabled)
                 if enabled and voice_agent is None and not voice_intro_sent:
                     voice_intro_sent = True
-                    session.say(
-                        f"{greeting} {question}" if turns == 0 else greeting
-                    )
+                    session.say(WELCOME if turns == 0 else "Hi, I’m Mira! I’m here if you’d like to talk through your plan.")
             return "ok"
 
     await session.start(
