@@ -140,8 +140,8 @@ def validate(
     state: PlannerState, proposal: Proposal, *, maps_fallback: MapsFailure | None = None,
 ) -> tuple[Itinerary | None, list[str], dict]:
     prefs = state.preferences
-    if prefs.city is None or prefs.budget is None or prefs.available_minutes is None:
-        return None, ["Collect the city, total INR budget and available time first."], {}
+    if missing := prefs.missing_planning_inputs():
+        return None, [f"Collect these inputs before planning: {', '.join(missing)}."], {}
 
     day = plan_date(state)
     errors: list[str] = []

@@ -26,7 +26,8 @@ logger = logging.getLogger("perfect-saturday")
 server = AgentServer()
 WELCOME = (
     "Hi, I’m Mira! Let’s plan your Saturday. "
-    "Which city will you be in, what’s your budget, and how much time do you have?"
+    "Which city, budget and available time should I use? "
+    "What’s your mood, what are your interests, and do you have any constraints?"
 )
 
 
@@ -154,7 +155,12 @@ async def entrypoint(ctx: JobContext):
                 session.input.set_audio_enabled(True)
                 session.output.set_audio_enabled(True)
                 if turns == 0:
-                    session.say(WELCOME)
+                    # Generate speech through the active realtime model. session.say
+                    # would synthesize this greeting with the pipeline's Cartesia voice.
+                    session.generate_reply(
+                        tool_choice="none",
+                        instructions=f"Greet the user with exactly this text: {WELCOME}",
+                    )
                 else:
                     session.generate_reply(
                         tool_choice="none",

@@ -24,6 +24,7 @@ def make_state():
         publish=AsyncMock(return_value=True),
         preferences=Preferences(
             city="Bengaluru", budget=2000, available_minutes=240,
+            mood="relaxed", interests=["food", "parks"], constraints=[],
             dietary="vegetarian_options", target_date=saturday(),
         ),
         places={
@@ -323,7 +324,7 @@ def test_outdoor_stop_needs_weather_and_rejects_high_rain():
 async def test_graph_uses_tool_results_and_emits_only_spoken_text():
     class ScriptedModel:
         def bind_tools(self, tools):
-            assert "display_itinerary" in {tool.name for tool in tools}
+            assert {tool.name for tool in tools} & {"display_itinerary", "update_preferences"}
             return self
 
         async def ainvoke(self, messages):

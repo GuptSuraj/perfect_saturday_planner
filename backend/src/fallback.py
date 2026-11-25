@@ -9,7 +9,7 @@ from validation import activity_cost, generic_leg, plan_date, ride_cost, validat
 
 def parse_user_preferences(preferences: Preferences) -> Preferences | None:
     # Both chat and voice already extract structured preferences before their first lookup.
-    if preferences.city is None or preferences.budget is None or preferences.available_minutes is None:
+    if preferences.missing_planning_inputs():
         return None
     return preferences
 

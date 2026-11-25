@@ -9,6 +9,13 @@ from state import PlannerState
 from tools import make_tools
 
 
+def ready_preferences(**updates):
+    return Preferences(**{
+        "city": "Bengaluru", "budget": 2000, "available_minutes": 120,
+        "mood": "relaxed", "interests": ["cafes"], "constraints": [], **updates,
+    })
+
+
 def geo_feature(name="Fixture Café", identity="a" * 200, lat=12.97, lon=77.59, **extra):
     return {"type": "Feature", "properties": {
         "place_id": identity, "name": name, "lat": lat, "lon": lon,
@@ -154,7 +161,7 @@ async def test_tools_display_grounded_geoapify_itinerary_with_credits_and_real_t
             return httpx.Response(tavily_status, json={"results": [{"url": "https://venue.example/menu", "content": "Venue menu"}]})
         return geo_response(request)
 
-    state = PlannerState(publish=AsyncMock(return_value=True), preferences=Preferences(
+    state = PlannerState(publish=AsyncMock(return_value=True), preferences=ready_preferences(
         city="Bengaluru", budget=2000, available_minutes=120,
     ))
     # Use a future Saturday even when the suite runs on Saturday evening.
@@ -217,7 +224,7 @@ async def test_google_details_failure_matches_geoapify_conservatively(same_branc
 
 
 async def test_all_place_providers_failed_still_triggers_existing_maps_failure():
-    state = PlannerState(publish=AsyncMock(return_value=True), preferences=Preferences(city="Bengaluru"))
+    state = PlannerState(publish=AsyncMock(return_value=True), preferences=ready_preferences(city="Bengaluru"))
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(429, json={}))) as client:
         tools = {t.name: t for t in make_tools(state, Providers(client, "google-test", "geo-test", ""))}
         result = await tools["search_places"].ainvoke({"query": "cafe"})
@@ -244,7 +251,7 @@ async def test_geoapify_env_key_and_geocoding_cache(monkeypatch):
 
 
 async def test_successful_empty_search_does_not_enable_sample_data():
-    state = PlannerState(publish=AsyncMock(return_value=True), preferences=Preferences(city="Bengaluru"))
+    state = PlannerState(publish=AsyncMock(return_value=True), preferences=ready_preferences(city="Bengaluru"))
     state.last_places_failure = "Earlier temporary outage"
 
     def handle(request):
@@ -277,7 +284,7 @@ async def test_parallel_partial_failure_keeps_real_venues():
             return httpx.Response(429, json={})
         return geo_response(request)
 
-    state = PlannerState(publish=AsyncMock(return_value=True), preferences=Preferences(
+    state = PlannerState(publish=AsyncMock(return_value=True), preferences=ready_preferences(
         city="Bengaluru", budget=2000, available_minutes=120,
     ))
     calls = AIMessage(content="", tool_calls=[
@@ -312,7 +319,7 @@ async def test_geoapify_outage_automatically_displays_labelled_sample():
         async def ainvoke(self, _):
             raise AssertionError("Provider failure should display the sample without a model request.")
 
-    state = PlannerState(publish=AsyncMock(return_value=True), preferences=Preferences(
+    state = PlannerState(publish=AsyncMock(return_value=True), preferences=ready_preferences(
         city="Bengaluru", budget=2000, available_minutes=120,
         target_date=upcoming_saturday(today_in_india() + timedelta(days=1)),
     ))

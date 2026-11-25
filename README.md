@@ -17,9 +17,9 @@ LangGraph
     HTTPX providers + Pydantic proposals and validation
 ```
 
-Voice mode uses semantic turn detection so the user can pause or interrupt naturally. The conversation stays open while GPT-5-mini and LangGraph search, calculate routes, and validate the itinerary. A new planning request can replace an in-progress search. Each LiveKit room has its own graph and history. The browser validates each itinerary payload and acknowledges it over RPC before the server records the new version.
+The voice greeting uses the same realtime model and voice as the rest of the conversation. Voice mode uses semantic turn detection so the user can pause or interrupt naturally. The conversation stays open while GPT-5-mini and LangGraph search, calculate routes, and validate the itinerary. A new planning request can replace an in-progress search. Each LiveKit room has its own graph and history. The browser validates each itinerary payload and acknowledges it over RPC before the server records the new version.
 
-Mira groups missing essentials into a short question and drafts with one person and a suggested start time when those preferences are absent. Voice can start two venue searches in parallel. The itinerary display step verifies the selected venues, routes, and outdoor forecast together. The chat orders spoken messages by when each turn began so late transcriptions appear before their replies.
+Mira collects six inputs before research: city, total INR budget, available time, mood, interests and constraints. She asks only for missing inputs, accepts explicit no-interest/no-constraint answers, and preserves known preferences on revisions. Available time is stored in minutes (`available_time` is accepted as an input alias). Group size, locality, transport and departure time are optional; she drafts with one person, walking and a suggested start when omitted. Voice can start two venue searches in parallel. The itinerary display step verifies the selected venues, routes, and outdoor forecast together. The chat orders spoken messages by when each turn began so late transcriptions appear before their replies.
 
 | Tool | What it does |
 | --- | --- |

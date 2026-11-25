@@ -28,18 +28,21 @@ lists, scripted filler, repetitive affirmations, and narrating your process. If 
 is still talking, let them finish. If they interrupt or change their mind, follow the new
 thread without repeating the part they've already heard.
 
-Only ask for missing essentials: city, total INR budget, and available time. Ask for
-missing budget and time together, even when the city is already known. Understand
-"all day", "the whole day", or "पूरा दिन" as eight hours, and "2K" as 2,000 rupees. Never ask for
-group size, start time, mood, transport, or area as a prerequisite. Assume one person
-and pick a suitable start, around 10 am for a full day. Use any preferences they offer,
-including interests, pace, travel mode, food preferences, and hard restrictions. Keep
-preferences the user already gave unless they change them.
-Set the dietary field for any vegetarian food request, including shakahari or शाकाहारी.
-Pick vegetarian_options except when a pure-veg kitchen is expressly needed. Reflect food
-requirements in the searches too. Save required indoor and wheelchair access settings
-in their dedicated fields. When speaking Hindi, use Mira's feminine first-person forms.
-Once the essentials are clear, start planning in that turn without another question.
+Before research, collect city, total INR budget, available time, mood, interests,
+and constraints. Ask only for missing inputs, grouping them into short questions.
+Do not start research with only city, budget and time. Convert hours to minutes;
+"all day", "the whole day" or "पूरा दिन" means eight hours; "2K" means 2,000 rupees.
+When the user explicitly has no constraints, save constraints=[]. For explicit
+"no preference" or "surprise me", save interests=[] or mood="flexible" as appropriate.
+Never assume omitted interests or constraints have been answered. Save partial inputs
+through plan_saturday with preferences even while gathering the remaining inputs;
+the planner will ask for what is missing without researching. Once all six are known,
+start planning in that turn. Use mood for pace, interests for venue selection and
+constraints to rule out unsuitable activities. Keep known inputs on revisions.
+Group size, start time, transport and locality remain optional. Assume one person
+and a suitable start time unless the user provides them. Set dietary for vegetarian
+or shakahari requests, and record indoor/outdoor and wheelchair requirements in the
+typed fields too. When speaking Hindi, use Mira's feminine first-person forms.
 
 Chat directly for greetings and preference shifts before they're ready to plan. Call
 plan_saturday to build a real itinerary as soon as you have enough details, or when they
@@ -116,7 +119,9 @@ class VoicePlanner(Agent):
             request: Latest user request and their relevant city, budget, time and preferences.
             action: create, revise, check, or confirm. Confirm only after explicit user approval.
             language: Use hi for a Hindi or Hinglish planning request, en for English.
-            preferences: Known city, total INR budget, and available minutes (480 for all day).
+            preferences: Save city, total INR budget, available minutes (480 for all day),
+                mood, interests, and constraints. Partial updates are allowed during intake.
+                Explicitly save [] for no interests or no constraints; never assume these.
                 Include other explicitly stated preferences in their specific fields.
                 Set dietary to vegetarian_options for vegetarian or shakahari food.
                 Leave optional defaults unset.
@@ -152,20 +157,20 @@ class VoicePlanner(Agent):
                     return {"messages": [AIMessage(content=saved["error"])]}
                 await self._planner.record_step("update_preferences", "success", "Used the preferences you shared.")
             prefs = self._planner.preferences
-            preferences_ready = prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
+            preferences_ready = not prefs.missing_planning_inputs()
             if preferences_ready and action in {"create", "revise"} and searches:
                 history.append(AIMessage(content="", tool_calls=[
                     {"name": "search_places", "args": search.model_dump(exclude_none=True), "id": f"call_{uuid4().hex}"}
                     for search in searches[:2]
                 ]))
             # Let LiveKit give the conversational model the floor while the graph works.
-            if action in {"create", "revise"}:
+            if preferences_ready and action in {"create", "revise"}:
                 await context.update(
                     "Research has started for this request. The user can keep talking.",
                     template="{message}",
                     silent=True,
                 )
-            trace_id = uuid4().hex if action in {"create", "revise"} else None
+            trace_id = uuid4().hex if preferences_ready and action in {"create", "revise"} else None
             completed = False
             try:
                 if trace_id:
@@ -212,7 +217,7 @@ class VoicePlanner(Agent):
         if (
             action in {"create", "revise"} and not displayed and not self._planner.last_places_failure
             and not result.get("maps_fallback_attempted")
-            and prefs.city is not None and prefs.budget is not None and prefs.available_minutes is not None
+            and not prefs.missing_planning_inputs()
         ):
             summary = localized(language, "I couldn’t verify a plan that fit just yet. I can try a tighter area.",
                                 "अभी आपकी ज़रूरतों के मुताबिक योजना की पुष्टि नहीं हो सकी। मैं किसी छोटे इलाके में विकल्प देख सकती हूँ।")

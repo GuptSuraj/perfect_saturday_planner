@@ -37,6 +37,7 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
     tools = make_tools(planner, providers)
     llm = chat_model.bind_tools(tools)
     llm_with_preferences = chat_model.bind_tools([tool for tool in tools if tool.name != "update_preferences"])
+    intake_llm = chat_model.bind_tools([tool for tool in tools if tool.name == "update_preferences"])
     tools_node = ToolNode(tools, handle_tool_errors=True)
 
     async def decide(state: TurnState):
@@ -48,6 +49,7 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             "preferences": planner.preferences.model_dump(mode="json", exclude_none=True),
             "last_displayed_itinerary": current.model_dump(mode="json") if current else None,
             "revision_needed": planner.revision_needed,
+            "missing_planning_inputs": planner.preferences.missing_planning_inputs(),
         }
         venues = [
             place for place in planner.places.values()
@@ -81,7 +83,10 @@ def build_graph(planner: PlannerState, providers: Providers, chat_model):
             ))
             model = chat_model
         else:
-            model = llm_with_preferences if state.get("preferences_recorded") else llm
+            if planner.preferences.missing_planning_inputs():
+                model = intake_llm
+            else:
+                model = llm_with_preferences if state.get("preferences_recorded") else llm
 
         try:
             async with asyncio.timeout(28):

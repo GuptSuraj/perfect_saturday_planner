@@ -33,7 +33,7 @@ async def save_preferences(state: PlannerState, patch: Preferences, request_revi
         if patch.target_date and (patch.target_date.weekday() != 5 or patch.target_date < today_in_india()):
             return {"status": "invalid", "error": "target_date must be a Saturday on or after today in India."}
         previous = state.preferences
-        preferences = Preferences.model_validate({**previous.model_dump(), **updates})
+        preferences = Preferences.model_validate({**previous.model_dump(exclude_unset=True), **updates})
         if preferences.city != previous.city:
             state.last_places_failure = None
             if "locality" not in updates:
@@ -81,6 +81,13 @@ def make_tools(state: PlannerState, providers: Providers):
                         duration_ms=None if status == "running" else round((perf_counter() - started) * 1000),
                     )
 
+                if name not in {"update_preferences", "confirm_itinerary"}:
+                    missing = state.preferences.missing_planning_inputs()
+                    if missing:
+                        return {
+                            "status": "needs_input", "missing_inputs": missing,
+                            "summary": f"Collect these inputs before researching or planning: {', '.join(missing)}.",
+                        }
                 state.calls += 1
                 if state.calls > 90:
                     return {"status": "unavailable", "error": "Session tool limit reached. Start a new conversation."}
@@ -114,6 +121,7 @@ def make_tools(state: PlannerState, providers: Providers):
     @traced("Updating your preferences")
     async def update_preferences(patch: Preferences, request_revision: bool = False) -> dict:
         """Save newly stated or corrected preferences. Send only the fields that changed.
+        Collect city, budget, available time, mood, interests and constraints before research.
         An explicit null clears a preference. Send complete replacement lists for interests
         and constraints. Set request_revision for a request to change the displayed plan
         even when preferences stay the same. Call alone before any city-dependent tools.

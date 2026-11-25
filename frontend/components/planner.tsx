@@ -168,7 +168,7 @@ export function Planner() {
           <div className="welcome">
             <MiraMark />
             <h2>Hi, I’m Mira.</h2>
-            <p>Tell me where you’ll be and what you’re in the mood for. Speak English or Hindi, or type in English or Hinglish.</p>
+            <p>Share your city, budget, available time, mood, interests and constraints. Speak English or Hindi, or type in English or Hinglish.</p>
             <button className="talk-button" disabled={planner.micChange} onClick={() => void planner.toggleMic()}>
               {planner.micChange ? <LoaderCircle size={19} className="spinner" /> : <Mic size={19} />}
               {planner.micChange ? "Connecting…" : "Talk to Mira"}

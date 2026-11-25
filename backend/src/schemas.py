@@ -2,7 +2,7 @@ from datetime import date, datetime, timedelta
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 INDIA = ZoneInfo("Asia/Kolkata")
 Time = Annotated[str, Field(pattern=r"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$")]
@@ -38,10 +38,13 @@ class Model(BaseModel):
 class Preferences(Model):
     city: ShortText | None = None
     budget: int | None = Field(default=None, ge=0, le=1_000_000)
-    available_minutes: int | None = Field(default=None, ge=15, le=960)
-    mood: ShortText | None = None
-    interests: list[ShortText] = Field(default_factory=list, max_length=8)
-    constraints: list[ShortText] = Field(default_factory=list, max_length=8)
+    available_minutes: int | None = Field(
+        default=None, ge=15, le=960, validation_alias=AliasChoices("available_minutes", "available_time"),
+        description="Available time in minutes; convert hours to minutes before saving.",
+    )
+    mood: ShortText | None = Field(default=None, description="User mood or pace; use flexible only when the user explicitly has no preference.")
+    interests: list[ShortText] = Field(default_factory=list, max_length=8, description="Explicit user interests, or [] when the user says no preference or surprise me.")
+    constraints: list[ShortText] = Field(default_factory=list, max_length=8, description="Explicit user restrictions, or [] when the user confirms there are none.")
     locality: ShortText | None = None
     start_time: Time | None = None
     people: int | None = Field(default=None, ge=1, le=20)
@@ -53,6 +56,14 @@ class Preferences(Model):
     accessibility_required: bool | None = Field(default=None, description="Set when wheelchair-accessible entry is required.")
     target_date: date | None = None
     allow_unverified_plan: bool | None = None
+
+    def missing_planning_inputs(self) -> list[str]:
+        required = ("city", "budget", "available_minutes", "mood", "interests", "constraints")
+        return [
+            "available_time" if name == "available_minutes" else name
+            for name in required
+            if name not in self.model_fields_set or getattr(self, name) is None
+        ]
 
 
 class Coordinates(Model):
